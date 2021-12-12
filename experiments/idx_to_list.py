@@ -4,6 +4,7 @@ from libnacl import crypto_kdf_derive_from_key as key_derive
 from libnacl import crypto_kdf_KEYBYTES as KEY_BYTES
 from nacl.hash import blake2b as hash_function
 from nacl.encoding import RawEncoder, Base32Encoder
+import json
 ## New and improved signature format:
 #  + pubkeys[n]: Depth first list of level-key pubkeys, last one is the entities root level pubkey
 #  + sig_index : 64 bit number representing the global signature index
@@ -14,36 +15,80 @@ from nacl.encoding import RawEncoder, Base32Encoder
 #      + signature
 #
 
+def ots_pairs_per_signature(hashlen, otsbits):
+    return ((hashlen*8-1) // otsbits)+1
+
 def ots_values_per_signature(hashlen, otsbits):
-    return ((hashlen-1)*2 // otsbits)+2
+    return 2 * ots_pairs_per_signature(hashlen, otsbits)
+
+def to_merkle_tree(pubkey_in, hashlen, salt):
+    mt = dict()
+    mt["0"] = dict()
+    mt["1"] = dict()
+    if len(pubkey_in) > 2:
+        mt0, mt["0"]["node"] = to_merkle_tree(pubkey_in[:len(pubkey_in)//2], hashlen, salt)
+        if "0" in mt0:
+            mt["0"]["0"] = mt0["0"]
+            mt["0"]["1"] = mt0["1"]
+            mt["0"]["node"] = mt0["0"]["node"]
+        mt1, mt["1"]["node"] = to_merkle_tree(pubkey_in[len(pubkey_in)//2:], hashlen, salt)
+        if "0" in mt1:
+            mt["1"]["0"] = mt1["0"]
+            mt["1"]["1"] = mt1["1"]
+            mt["1"]["node"] = mt1["0"]["node"]
+        return mt, hash_function(mt["0"]["node"] + mt["1"]["node"], digest_size=hashlen, key=salt, encoder=RawEncoder)
+    mt["0"]["node"] = pubkey_in[0]
+    mt["1"]["node"] = pubkey_in[1]
+    return mt, hash_function(pubkey_in[0] + pubkey_in[1], digest_size=hashlen, key=salt, encoder=RawEncoder)
 
 class LevelKey:
     def __init__(self, hashlen, otsbits, height, seed, startno, sig_index):
-        print(startno)
         self.hashlen=hashlen
         self.otsbits=otsbits
         self.height=height
         self.salt = key_derive(hashlen, startno, "Signatur", seed)
-        print("Creating huge privkey", hashlen, "x", (1 << (height + 1)) * ots_values_per_signature(hashlen, otsbits)) 
         self.privkey = list()
-        for idx in range(startno + 1, startno + 1 + (1 << (height + 1)) * ots_values_per_signature(hashlen, otsbits)):
+        vps = ots_values_per_signature(hashlen, otsbits)
+        self.chop_count = ots_pairs_per_signature(hashlen, otsbits)
+        sig_count = 1 << height
+        pkeystart = startno + 1
+        pkeyend = pkeystart + vps * sig_count
+        for idx in range(pkeystart, pkeyend):
             self.privkey.append(key_derive(hashlen, idx, "Signatur", seed))
-        print(len(self.privkey))
         big_pubkey = list()
         for index, privpart in enumerate(self.privkey):
             res = privpart
             for _ in range(0, 1 << otsbits):
                 res = hash_function(res, digest_size=hashlen, key=self.salt, encoder=RawEncoder)
             big_pubkey.append(res)
-        self.big_pubkey = [hash_function(b"".join(big_pubkey[i:i+ots_values_per_signature(hashlen, otsbits)//2]),digest_size=hashlen, key=self.salt, encoder=RawEncoder) for i in range(0, len(big_pubkey), ots_values_per_signature(hashlen, otsbits)//2)]
-        print(len(self.big_pubkey))
-        pubkey = self.big_pubkey.copy()
-        while len(pubkey) > 1:
-            pubkey = [hash_function(pubkey[i] + pubkey[i+1], digest_size=hashlen, key=self.salt, encoder=RawEncoder) for
-                i in range(0, len(pubkey), 2)]
-        self.pubkey = pubkey[0]
+        pubkey = list()
+        for idx1 in range(0,sig_count):
+            pubkey.append(hash_function(b"".join(big_pubkey[idx1*vps:idx1*vps+vps]),digest_size=hashlen, key=self.salt, encoder=RawEncoder))
+        self.merkle_tree, self.pubkey = to_merkle_tree(pubkey, hashlen, self.salt)
         self.sig_index=sig_index
 
+    def merkle_header(self):
+        fstring = "0" + str(self.height) + "b"
+        as_binlist = list(format(self.sig_index,fstring))
+        header = list()
+        while len(as_binlist) > 0:
+            subtree = self.merkle_tree
+            for idx in as_binlist[:-1]:
+                subtree = subtree[idx]
+            inverse = str(1 - int(as_binlist[-1]))
+            header.append(subtree[inverse]["node"])
+            as_binlist = as_binlist[:-1]
+        return b"".join(header)
+
+    def sign(self, digest):
+        header = self.merkle_header()
+        print(header)
+        as_bigno = int.from_bytes(digest,byteorder='big', signed=True)
+        as_int_list = list()
+        for time in range(0,self.chop_count):
+            as_int_list.append(as_bigno % (1 << self.otsbits))
+            as_bigno = as_bigno >> self.otsbits
+        as_int_list.reverse()
 
 def deep_count(hash_len, ots_bits, harr):
     if len(harr) == 1:
@@ -73,4 +118,5 @@ def get_level_keys(hashlen, otsbits, heights, seed, idx):
     return rval
     
 seed=keygen()
-level_keys = get_level_keys(24, 6, [7, 5, 6], seed, 37449)
+level_keys = get_level_keys(24, 6, [7, 5, 6, 9], seed, 37449)
+level_keys[3].sign(b"abcdefghijklmnopqrstuvwxyz012345ABCDEFGHIJKLMNOPQRSTUVWXYZ67890%")
