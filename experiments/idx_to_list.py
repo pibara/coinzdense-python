@@ -48,11 +48,11 @@ class LevelKey:
         self.height=height
         self.salt = key_derive(hashlen, startno, "Signatur", seed)
         self.privkey = list()
-        vps = ots_values_per_signature(hashlen, otsbits)
+        self.vps = ots_values_per_signature(hashlen, otsbits)
         self.chop_count = ots_pairs_per_signature(hashlen, otsbits)
         sig_count = 1 << height
         pkeystart = startno + 1
-        pkeyend = pkeystart + vps * sig_count
+        pkeyend = pkeystart + self.vps * sig_count
         for idx in range(pkeystart, pkeyend):
             self.privkey.append(key_derive(hashlen, idx, "Signatur", seed))
         big_pubkey = list()
@@ -63,7 +63,7 @@ class LevelKey:
             big_pubkey.append(res)
         pubkey = list()
         for idx1 in range(0,sig_count):
-            pubkey.append(hash_function(b"".join(big_pubkey[idx1*vps:idx1*vps+vps]),digest_size=hashlen, key=self.salt, encoder=RawEncoder))
+            pubkey.append(hash_function(b"".join(big_pubkey[idx1*self.vps:idx1*self.vps+self.vps]),digest_size=hashlen, key=self.salt, encoder=RawEncoder))
         self.merkle_tree, self.pubkey = to_merkle_tree(pubkey, hashlen, self.salt)
         self.sig_index=sig_index
 
@@ -78,17 +78,32 @@ class LevelKey:
             inverse = str(1 - int(as_binlist[-1]))
             header.append(subtree[inverse]["node"])
             as_binlist = as_binlist[:-1]
-        return b"".join(header)
+        return self.salt + b"".join(header)
 
     def sign(self, digest):
-        header = self.merkle_header()
-        print(header)
+        signature = self.merkle_header()
         as_bigno = int.from_bytes(digest,byteorder='big', signed=True)
         as_int_list = list()
         for time in range(0,self.chop_count):
             as_int_list.append(as_bigno % (1 << self.otsbits))
             as_bigno = as_bigno >> self.otsbits
         as_int_list.reverse()
+        my_ots_key =  self.privkey[self.sig_index * self.vps: (self.sig_index + 1) * self.vps]
+        my_sigparts = [[as_int_list[i//2], my_ots_key[i], my_ots_key[i+1]] for i in range(0,len(my_ots_key),2)]
+        for sigpart in my_sigparts:
+            count1 = sigpart[0] + 1
+            count2 = (1 << self.otsbits) - sigpart[0]
+            sig1 = sigpart[1]
+            for _ in range(0,count1):
+                sig1 = hash_function(sig1, digest_size=self.hashlen, key=self.salt, encoder=RawEncoder)
+            signature += sig1
+            sig2 = sigpart[2]
+            for _ in range(0,count2):
+                sig2 = hash_function(sig2, digest_size=self.hashlen, key=self.salt, encoder=RawEncoder)
+            signature += sig2
+        return signature
+
+
 
 def deep_count(hash_len, ots_bits, harr):
     if len(harr) == 1:
@@ -116,7 +131,15 @@ def get_level_keys(hashlen, otsbits, heights, seed, idx):
     for index, init_vals in enumerate(init_list):
         rval.append(LevelKey(hashlen, otsbits, heights[index], seed, init_vals[0], init_vals[1]))
     return rval
+
+def sign_digest(level_keys, digest, index, compressed=False):
+    # FIXME, all pubkeys, depth first
+    # FIXME, the index as 64 bit big endian
+    # FIXME, each of the signatures, depth first, unless compred
+    return b""
     
 seed=keygen()
-level_keys = get_level_keys(24, 6, [7, 5, 6, 9], seed, 37449)
-level_keys[3].sign(b"abcdefghijklmnopqrstuvwxyz012345ABCDEFGHIJKLMNOPQRSTUVWXYZ67890%")
+sign_index = 37449
+level_keys = get_level_keys(24, 6, [6, 6, 6, 6], seed, sign_index)
+sig1 = sign_digest(b"abcdefghijklmnopqrstuvwxyz012345ABCDEFGHIJKLMNOPQRSTUVWXYZ67890%",level_keys, sign_index)
+print(len(sig1))
