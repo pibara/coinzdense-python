@@ -172,12 +172,80 @@ def sign_string(level_keys, msg, index, hashlen, compressed=False):
     return sign_digest(level_keys, digest, index, compressed)
 
 
+def _serialize(inp):
+    if isinstance(inp,dict):
+        output = dict()
+        for key,val in inp.items():
+            if isinstance(val, (int, float, str, bool, type(None))):
+                output[key] = val
+            elif isinstance(val,(dict, list)):
+                if key == "merkle_bottom":
+                    output[key] = [v.hex() for v in val]
+                else:
+                    output[key] = _serialize(val)
+            elif isinstance(val, bytes):
+                if key in ["seedhash","signature"]:
+                    output[key] = val.hex()
+                else:
+                    raise RuntimeError("Unexpected bytes type data in backup structure")
+            else:
+                print(type(val))
+                raise RuntimeError("Unexpected backup data type")
+    elif isinstance(inp, list):
+        output = list()
+        for idx, val in enumerate(inp):
+            if isinstance(val, (int, float, str, bool, type(None))):
+                output.append(val)
+            elif isinstance(val,(dict, list)):
+                output.append(_serialize(val))
+            else:
+                raise RuntimeError("Unexpected backup data type")
+    elif isinstance(inp, type(None)):
+        return None
+    else:
+        raise RuntimeError("Unexpected backup data type")
+    return output
+
+def _deserialize(inp):
+    if isinstance(inp,dict):
+        output = dict()
+        for key,val in inp.items():
+            if isinstance(val, (int, float, bool, type(None))):
+                output[key] = val
+            elif isinstance(val,(dict, list)):
+                if key == "merkle_bottom":
+                    output[key] = [bytes.fromhex(v) for v in val]
+                else:
+                    output[key] = _deserialize(val)
+            elif isinstance(val, str):
+                if key in ["seedhash","signature"]:
+                    output[key] = bytes.fromhex(val)
+                else:
+                    output[key] = val
+            else:
+                raise RuntimeError("Unexpected backup data type")
+    elif isinstance(inp, list):
+        output = list()
+        for idx, val in enumerate(inp):
+            if isinstance(val, (int, float, str, bool, type(None))):
+                output.append(val)
+            elif isinstance(val,(dict, list)):
+                output.append(_deserialize(val))
+            else:
+                raise RuntimeError("Unexpected backup data type")
+    elif isinstance(inp, type(None)):
+        return None
+    else:
+        raise RuntimeError("Unexpected backup data type")
+    return output
+
 class SigningKey:
-    def __init__(self, hashlen, otsbits, heights, seed=None, idx=0, backup=None):
+    def __init__(self, hashlen, otsbits, heights, seed=None, idx=0, backup=None, one_client=False):
         self.hashlen = hashlen
         self.otsbits = otsbits
         self.heights = heights
-        self.backup = backup
+        self.max_idx = (1 << sum(heights)) - 1 
+        self.backup = _deserialize(backup)
         self.idx = idx
         self.seed = seed
         if seed is None:
@@ -199,8 +267,8 @@ class SigningKey:
                raise RuntimeError("Invocation parameters of SigningKey constructor don't match backup")
         if self.backup["idx"] > idx:
             raise RuntimeError("Backup has a higher index number than blockchain, this should not be possible, possible MITM or key-DOS attack")
-        elif self.backup["idx"] < idx:
-            print("Warning: Backup has lower index number than the blockchain, an other client may be using a copy of your signing key")
+        elif self.backup["idx"] < idx and one_client:
+            raise RuntimeError("Another client may be using a copy of your signing key")
         init_list = idx_to_list(hashlen, otsbits, idx,heights)
         needed = set([val[0] for val in init_list])
         drop = set()
@@ -224,21 +292,25 @@ class SigningKey:
 
     def _increment_index(self):
         new_idx = self.idx + 1
-        init_list = idx_to_list(self.hashlen, self.otsbits, new_idx, self.heights)
-        for index, vals in enumerate(init_list):
-            if self.level_keys[index].startno != vals[0]:
-                self.level_keys[index] = LevelKey(self.hashlen, self.otsbits, self.heights[index], self.seed, vals[0], vals[1], None)
-                if index>0:
-                    self.level_keys[index].get_signed_by_parent(self.level_keys[index - 1])
-                self.backup["key_cache"][vals[0]] = self.level_keys[index].backup
-                del self.backup["key_cache"][self.level_keys[index].startno]
-            else:
-                self.level_keys[index].sig_index = vals[1]
+        if new_idx <= self.max_idx:
+            init_list = idx_to_list(self.hashlen, self.otsbits, new_idx, self.heights)
+            for index, vals in enumerate(init_list):
+                if self.level_keys[index].startno != vals[0]:
+                    self.level_keys[index] = LevelKey(self.hashlen, self.otsbits, self.heights[index], self.seed, vals[0], vals[1], None)
+                    if index>0:
+                        self.level_keys[index].get_signed_by_parent(self.level_keys[index - 1])
+                    self.backup["key_cache"][vals[0]] = self.level_keys[index].backup
+                    del self.backup["key_cache"][self.level_keys[index].startno]
+                else:
+                    self.level_keys[index].sig_index = vals[1]
         self.idx = new_idx
         self.backup["idx"] = new_idx
 
 
     def sign_digest(self, digest, compressed=False):
+        if self.idx > self.max_idx:
+            raise RuntimeError("SigningKey exhausted")
+        print("   - idx = ", self.idx, "max_idx = ", self.max_idx)
         rval = b""
         for level_key in reversed(self.level_keys):
             rval += level_key.pubkey
@@ -259,17 +331,30 @@ class SigningKey:
     def sign_data(msg, compressed=False):
         digest = hash_function(msg, digest_size=self.hashlen, encoder=RawEncoder)
         return self.sign_digest(digest, compressed)
+    def serialize(self):
+        return _serialize(self.backup)
 
 
-key = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3, 3])
+
+key = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3])
 start = time.time()
 sig = key.sign_string("In een groen groen groen groen knollen knollen land")
 print(0,len(sig), time.time() - start)
-backup = key.backup
+backup = key.serialize()
+print(json.dumps(backup, indent=1))
 sign_index = key.idx
 seed2 = key.seed
-key2 = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3, 3], seed=seed2, idx=sign_index, backup=backup)
-for idx in range(0, 1<<12):
-    start = time.time()
-    sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
-    print(idx, len(sig), time.time() - start)
+key2 = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3], seed=seed2, idx=sign_index, backup=backup)
+try:
+    for idx in range(0, 1 << 9):
+        start = time.time()
+        sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
+        print(idx, len(sig), time.time() - start)
+except RuntimeError as ex:
+    print(ex)
+backup = key.serialize()
+sign_index = key.idx
+key3 = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3], seed=seed2, idx=sign_index, backup=backup)
+start = time.time()
+sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
+print(idx, len(sig), time.time() - start)
