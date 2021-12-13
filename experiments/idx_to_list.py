@@ -5,6 +5,7 @@ from libnacl import crypto_kdf_KEYBYTES as KEY_BYTES
 from nacl.hash import blake2b as hash_function
 from nacl.encoding import RawEncoder, Base32Encoder
 import json
+import time
 ## New and improved signature format:
 #  + pubkeys[n]: Depth first list of level-key pubkeys, last one is the entities root level pubkey
 #  + sig_index : 64 bit number representing the global signature index
@@ -42,7 +43,8 @@ def to_merkle_tree(pubkey_in, hashlen, salt):
     return mt, hash_function(pubkey_in[0] + pubkey_in[1], digest_size=hashlen, key=salt, encoder=RawEncoder)
 
 class LevelKey:
-    def __init__(self, hashlen, otsbits, height, seed, startno, sig_index):
+    def __init__(self, hashlen, otsbits, height, seed, startno, sig_index, backup):
+        self.startno = startno
         self.hashlen=hashlen
         self.otsbits=otsbits
         self.height=height
@@ -55,17 +57,34 @@ class LevelKey:
         pkeyend = pkeystart + self.vps * sig_count
         for idx in range(pkeystart, pkeyend):
             self.privkey.append(key_derive(hashlen, idx, "Signatur", seed))
-        big_pubkey = list()
-        for index, privpart in enumerate(self.privkey):
-            res = privpart
-            for _ in range(0, 1 << otsbits):
-                res = hash_function(res, digest_size=hashlen, key=self.salt, encoder=RawEncoder)
-            big_pubkey.append(res)
-        pubkey = list()
-        for idx1 in range(0,sig_count):
-            pubkey.append(hash_function(b"".join(big_pubkey[idx1*self.vps:idx1*self.vps+self.vps]),digest_size=hashlen, key=self.salt, encoder=RawEncoder))
+        self.backup = backup
+        if self.backup is None:
+            self.backup = dict()
+            self.backup["merkle_bottom"] = None
+            self.backup["signature"] = None
+        if self.backup["merkle_bottom"] is None:
+            big_pubkey = list()
+            for index, privpart in enumerate(self.privkey):
+                res = privpart
+                for _ in range(0, 1 << otsbits):
+                    res = hash_function(res, digest_size=hashlen, key=self.salt, encoder=RawEncoder)
+                big_pubkey.append(res)
+            pubkey = list()
+            for idx1 in range(0,sig_count):
+                pubkey.append(hash_function(b"".join(big_pubkey[idx1*self.vps:idx1*self.vps+self.vps]),digest_size=hashlen, key=self.salt, encoder=RawEncoder))
+            self.backup["merkle_bottom"] = pubkey
+        else:
+            pubkey = self.backup["merkle_bottom"]
         self.merkle_tree, self.pubkey = to_merkle_tree(pubkey, hashlen, self.salt)
         self.sig_index=sig_index
+        if self.backup["signature"] is None:
+            self.signature = None
+        else:
+            self.signature = self.backup["signature"]
+
+    def get_signed_by_parent(self, parent):
+        self.signature = parent.sign(self.pubkey)
+        self.backup["signature"] = self.signature
 
     def merkle_header(self):
         fstring = "0" + str(self.height) + "b"
@@ -130,16 +149,135 @@ def get_level_keys(hashlen, otsbits, heights, seed, idx):
     rval = list()
     for index, init_vals in enumerate(init_list):
         rval.append(LevelKey(hashlen, otsbits, heights[index], seed, init_vals[0], init_vals[1]))
+        if index > 0:
+            rval[index].get_signed_by_parent(rval[index - 1])
     return rval
 
 def sign_digest(level_keys, digest, index, compressed=False):
-    # FIXME, all pubkeys, depth first
-    # FIXME, the index as 64 bit big endian
-    # FIXME, each of the signatures, depth first, unless compred
-    return b""
-    
-seed=keygen()
-sign_index = 37449
-level_keys = get_level_keys(24, 6, [6, 6, 6, 6], seed, sign_index)
-sig1 = sign_digest(b"abcdefghijklmnopqrstuvwxyz012345ABCDEFGHIJKLMNOPQRSTUVWXYZ67890%",level_keys, sign_index)
-print(len(sig1))
+    rval = b""
+    for level_key in reversed(level_keys):
+        rval += level_key.pubkey
+    rval += index.to_bytes(8, 'big')
+    rval += level_keys[-1].sign(digest)
+    done = False
+    for level_key in reversed(level_keys[1:]):
+        if not done: 
+            rval += level_key.signature
+            if level_key.sig_index != 0 and compressed:
+                done = True
+    return rval
+
+def sign_string(level_keys, msg, index, hashlen, compressed=False):
+    digest = hash_function(msg.encode("latin1"), digest_size=hashlen, encoder=RawEncoder)
+    return sign_digest(level_keys, digest, index, compressed)
+
+
+class SigningKey:
+    def __init__(self, hashlen, otsbits, heights, seed=None, idx=0, backup=None):
+        self.hashlen = hashlen
+        self.otsbits = otsbits
+        self.heights = heights
+        self.backup = backup
+        self.idx = idx
+        self.seed = seed
+        if seed is None:
+            self.seed = keygen()
+        seedhash = hash_function(self.seed, digest_size=hashlen, encoder=Base32Encoder)
+        init_list = idx_to_list(hashlen, otsbits, idx,heights)
+        if self.backup is None:
+            self.backup = dict()
+            self.backup["hashlen"] = hashlen
+            self.backup["otsbits"] = otsbits
+            self.backup["heights"] = heights
+            self.backup["idx"] = idx
+            self.backup["seedhash"] = seedhash
+            self.backup["key_cache"] = dict()
+        if self.backup["hashlen"] != hashlen or \
+           self.backup["otsbits"] != otsbits or \
+           self.backup["seedhash"] != seedhash or \
+           self.backup["heights"] != heights:
+               raise RuntimeError("Invocation parameters of SigningKey constructor don't match backup")
+        if self.backup["idx"] > idx:
+            raise RuntimeError("Backup has a higher index number than blockchain, this should not be possible, possible MITM or key-DOS attack")
+        elif self.backup["idx"] < idx:
+            print("Warning: Backup has lower index number than the blockchain, an other client may be using a copy of your signing key")
+        init_list = idx_to_list(hashlen, otsbits, idx,heights)
+        needed = set([val[0] for val in init_list])
+        drop = set()
+        for key in self.backup["key_cache"].keys():
+            if key not in needed:
+                drop.add(key)
+        for key in drop:
+            del self.backup["key_cache"][key]
+        for key in needed:
+            if key not in self.backup["key_cache"].keys():
+                self.backup["key_cache"][key] = None
+        restore_info = [self.backup["key_cache"][val[0]] for val in init_list]
+        self.level_keys = list()
+        for index, init_vals in enumerate(init_list):
+            backup = restore_info[index]
+            self.level_keys.append(LevelKey(hashlen, otsbits, heights[index], self.seed, init_vals[0], init_vals[1], backup))
+            if index > 0:
+                self.level_keys[index].get_signed_by_parent(self.level_keys[index-1])
+            self.backup["key_cache"][init_vals[0]] = self.level_keys[index].backup
+        
+
+    def _increment_index(self):
+        new_idx = self.idx + 1
+        init_list = idx_to_list(self.hashlen, self.otsbits, new_idx, self.heights)
+        for index, vals in enumerate(init_list):
+            if self.level_keys[index].startno != vals[0]:
+                self.level_keys[index] = LevelKey(self.hashlen, self.otsbits, self.heights[index], self.seed, vals[0], vals[1], None)
+                if index>0:
+                    self.level_keys[index].get_signed_by_parent(self.level_keys[index - 1])
+                self.backup["key_cache"][vals[0]] = self.level_keys[index].backup
+                del self.backup["key_cache"][self.level_keys[index].startno]
+            else:
+                self.level_keys[index].sig_index = vals[1]
+        self.idx = new_idx
+        self.backup["idx"] = new_idx
+
+
+    def sign_digest(self, digest, compressed=False):
+        rval = b""
+        for level_key in reversed(self.level_keys):
+            rval += level_key.pubkey
+        rval += self.idx.to_bytes(8, 'big')
+        rval += self.level_keys[-1].sign(digest)
+        done = False
+        for level_key in reversed(self.level_keys[1:]):
+            if not done:
+                rval += level_key.signature
+                if level_key.sig_index != 0 and compressed:
+                    done = True
+        self._increment_index()
+        return rval
+
+    def sign_string(self, msg, compressed=False):
+        digest = hash_function(msg.encode("latin1"), digest_size=self.hashlen, encoder=RawEncoder)
+        return self.sign_digest(digest, compressed)
+    def sign_data(msg, compressed=False):
+        digest = hash_function(msg, digest_size=self.hashlen, encoder=RawEncoder)
+        return self.sign_digest(digest, compressed)
+
+
+start = time.time()
+key = SigningKey(hashlen=24, otsbits=6, heights=[5, 6, 6, 7])
+print("Generated", time.time() - start)
+start = time.time()
+sig = key.sign_string("In een groen groen groen groen knollen knollen land")
+print(len(sig), time.time() - start)
+start = time.time()
+sig = key.sign_string("In een groen groen groen groen knollen knollen land", compressed=True)
+print(len(sig), time.time() - start)
+backup = key.backup
+sign_index = key.idx
+seed2 = key.seed
+start = time.time()
+key2 = SigningKey(hashlen=24, otsbits=6, heights=[5, 6, 6, 7], seed=seed2, idx=sign_index, backup=backup)
+print("restored", time.time() - start)
+for idx in range(0, 1<<24):
+    start = time.time()
+    sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
+    if len(sig) != 3536 or time.time() - start > 0.1:
+        print(idx, len(sig), time.time() - start)
