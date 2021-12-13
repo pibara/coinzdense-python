@@ -261,23 +261,15 @@ class SigningKey:
         return self.sign_digest(digest, compressed)
 
 
-start = time.time()
-key = SigningKey(hashlen=24, otsbits=6, heights=[5, 6, 6, 7])
-print("Generated", time.time() - start)
+key = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3, 3])
 start = time.time()
 sig = key.sign_string("In een groen groen groen groen knollen knollen land")
-print(len(sig), time.time() - start)
-start = time.time()
-sig = key.sign_string("In een groen groen groen groen knollen knollen land", compressed=True)
-print(len(sig), time.time() - start)
+print(0,len(sig), time.time() - start)
 backup = key.backup
 sign_index = key.idx
 seed2 = key.seed
-start = time.time()
-key2 = SigningKey(hashlen=24, otsbits=6, heights=[5, 6, 6, 7], seed=seed2, idx=sign_index, backup=backup)
-print("restored", time.time() - start)
-for idx in range(0, 1<<24):
+key2 = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3, 3], seed=seed2, idx=sign_index, backup=backup)
+for idx in range(0, 1<<12):
     start = time.time()
     sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
-    if len(sig) != 3536 or time.time() - start > 0.1:
-        print(idx, len(sig), time.time() - start)
+    print(idx, len(sig), time.time() - start)
