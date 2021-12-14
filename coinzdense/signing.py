@@ -26,12 +26,16 @@ def _to_merkle_tree(pubkey_in, hashlen, salt):
     mtree["0"] = dict()
     mtree["1"] = dict()
     if len(pubkey_in) > 2:
-        mt0, mtree["0"]["node"] = _to_merkle_tree(pubkey_in[:len(pubkey_in)//2], hashlen, salt)
+        mt0, mtree["0"]["node"] = _to_merkle_tree(pubkey_in[:len(pubkey_in)//2],
+                                                  hashlen,
+                                                  salt)
         if "0" in mt0:
             mtree["0"]["0"] = mt0["0"]
             mtree["0"]["1"] = mt0["1"]
             mtree["0"]["node"] = mt0["0"]["node"]
-        mt1, mtree["1"]["node"] = _to_merkle_tree(pubkey_in[len(pubkey_in)//2:], hashlen, salt)
+        mt1, mtree["1"]["node"] = _to_merkle_tree(pubkey_in[len(pubkey_in)//2:],
+                                                  hashlen,
+                                                  salt)
         if "0" in mt1:
             mtree["1"]["0"] = mt1["0"]
             mtree["1"]["1"] = mt1["1"]
@@ -57,12 +61,23 @@ class _LevelKey:
         self.hashlen=hashlen
         self.otsbits=otsbits
         self.height=height
-        self.salt = _nacl2_key_derive(hashlen, startno, "Signatur", seed)
+        self.salt = _nacl2_key_derive(hashlen,
+                                      startno,
+                                      "Signatur",
+                                      seed)
         self.privkey = list()
-        self.vps = _ots_values_per_signature(hashlen, otsbits)
-        self.chop_count = _ots_pairs_per_signature(hashlen, otsbits)
-        for idx in range(startno + 1, startno + 1 + self.vps * (1 << height)):
-            self.privkey.append(_nacl2_key_derive(hashlen, idx, "Signatur", seed))
+        self.vps = _ots_values_per_signature(hashlen,
+                                             otsbits)
+        self.chop_count = _ots_pairs_per_signature(hashlen,
+                                                   otsbits)
+        for idx in range(startno + 1,
+                         startno + 1 + self.vps * (1 << height)):
+            self.privkey.append(
+                    _nacl2_key_derive(hashlen,
+                                      idx,
+                                      "Signatur",
+                                      seed)
+                    )
         self.backup = backup
         if self.backup is None:
             self.backup = dict()
@@ -73,7 +88,10 @@ class _LevelKey:
             for privpart in self.privkey:
                 res = privpart
                 for _ in range(0, 1 << otsbits):
-                    res = _nacl1_hash_function(res, digest_size=hashlen, key=self.salt, encoder=_Nacl1RawEncoder)
+                    res = _nacl1_hash_function(res,
+                                               digest_size=hashlen,
+                                               key=self.salt,
+                                               encoder=_Nacl1RawEncoder)
                 big_pubkey.append(res)
             pubkey = list()
             for idx1 in range(0,1 << height):
@@ -85,7 +103,9 @@ class _LevelKey:
             self.backup["merkle_bottom"] = pubkey
         else:
             pubkey = self.backup["merkle_bottom"]
-        self.merkle_tree, self.pubkey = _to_merkle_tree(pubkey, hashlen, self.salt)
+        self.merkle_tree, self.pubkey = _to_merkle_tree(pubkey,
+                                                        hashlen,
+                                                        self.salt)
         self.sig_index=sig_index
         if self.backup["signature"] is None:
             self.signature = None
@@ -100,7 +120,10 @@ class _LevelKey:
     def merkle_header(self):
         """Calculate the merkle header for the curent signature"""
         fstring = "0" + str(self.height) + "b"
-        as_binlist = list(format(self.sig_index,fstring))
+        as_binlist = list(
+                format(self.sig_index,
+                       fstring)
+            )
         header = list()
         while len(as_binlist) > 0:
             subtree = self.merkle_tree
@@ -114,7 +137,9 @@ class _LevelKey:
     def sign(self, digest):
         """Sign for a digest"""
         signature = self.merkle_header()
-        as_bigno = int.from_bytes(digest,byteorder='big', signed=True)
+        as_bigno = int.from_bytes(digest,
+                                  byteorder='big',
+                                  signed=True)
         as_int_list = list()
         for _ in range(0,self.chop_count):
             as_int_list.append(as_bigno % (1 << self.otsbits))
@@ -188,7 +213,6 @@ def _jsonable(inp):
                 else:
                     raise RuntimeError("Unexpected bytes type data in backup structure")
             else:
-                print(type(val))
                 raise RuntimeError("Unexpected backup data type")
     elif isinstance(inp, list):
         output = list()
@@ -261,7 +285,9 @@ class SigningKey:
             else:
                 salt = bytes.fromhex(self.backup["salt"]) if (self.backup is not None and
                         "salt" in self.backup) else _nacl1_random(_NACL1_SALTBYTES)
-                self.seed = _nacl1_kdf(_NACL2_KEY_BYTES, password, salt)
+                self.seed = _nacl1_kdf(_NACL2_KEY_BYTES,
+                                       password,
+                                       salt)
         if self.backup is None:
             self.backup = dict()
             self.backup["hashlen"] = hashlen
@@ -318,7 +344,10 @@ class SigningKey:
     def _increment_index(self):
         new_idx = self.idx + 1
         if new_idx <= self.max_idx:
-            init_list = _idx_to_list(self.hashlen, self.otsbits, new_idx, self.heights)
+            init_list = _idx_to_list(self.hashlen,
+                                     self.otsbits,
+                                     new_idx,
+                                     self.heights)
             for index, vals in enumerate(init_list):
                 if self.level_keys[index].startno != vals[0]:
                     self.level_keys[index] = _LevelKey(
@@ -343,7 +372,6 @@ class SigningKey:
         """Sign a digest using a complete multi-level signature"""
         if self.idx > self.max_idx:
             raise RuntimeError("SigningKey exhausted")
-        print("   - idx = ", self.idx, "max_idx = ", self.max_idx)
         rval = b""
         for level_key in reversed(self.level_keys):
             rval += level_key.pubkey
@@ -360,13 +388,18 @@ class SigningKey:
 
     def sign_string(self, msg, compressed=False):
         """Sign a string using a complete multi-level signature"""
-        digest = _nacl1_hash_function(msg.encode("latin1"), digest_size=self.hashlen, encoder=_Nacl1RawEncoder)
+        digest = _nacl1_hash_function(msg.encode("latin1"),
+                                      digest_size=self.hashlen,
+                                      encoder=_Nacl1RawEncoder)
         return self.sign_digest(digest, compressed)
     def sign_data(self,msg, compressed=False):
         """Sign a bytes using a complete multi-level signature"""
-        digest = _nacl1_hash_function(msg, digest_size=self.hashlen, encoder=_Nacl1RawEncoder)
-        return self.sign_digest(digest, compressed)
+        digest = _nacl1_hash_function(msg,
+                                      digest_size=self.hashlen,
+                                      encoder=_Nacl1RawEncoder)
+        return self.sign_digest(digest,
+                                compressed)
     def serialize(self):
         """Serialize signing key state to a JSON string"""
-        return _json.dumps(_jsonable(self.backup), indent=1)
-
+        return _json.dumps(_jsonable(self.backup),
+                           indent=1)
