@@ -1,12 +1,17 @@
 #!/usr/bin/python3
 import time
 import coinzdense.signing
+import coinzdense.validation
+
+venv = coinzdense.validation.ValidationEnv(hashlen=24, otsbits=6, heights=[2, 3, 4])
 
 key = coinzdense.signing.SigningKey(hashlen=24, otsbits=6, heights=[2, 3, 4],
                  password=b"What kind of dumb password is this?")
 start = time.time()
 sig = key.sign_string("In een groen groen groen groen knollen knollen land")
 print(0,len(sig), time.time() - start)
+valsig = venv.signature(sig)
+print(valsig.get_pubkey(), valsig.validate())
 backup = key.serialize()
 print(backup)
 sign_index = key.idx

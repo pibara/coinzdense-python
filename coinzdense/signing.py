@@ -4,6 +4,7 @@
 This module provides simple BLAKE2 hash-based based signature using a simple
 design made out of a combination of a merkle tree and dual OTS chains.
 """
+import sys
 import json as _json
 from libnacl import crypto_kdf_keygen as _nacl2_keygen
 from libnacl import crypto_kdf_derive_from_key as _nacl2_key_derive
@@ -26,35 +27,25 @@ def _ots_values_per_signature(hashlen, otsbits):
 
 def _to_merkle_tree(pubkey_in, hashlen, salt):
     mtree = dict()
-    mtree["0"] = dict()
-    mtree["1"] = dict()
     if len(pubkey_in) > 2:
-        mt0, mtree["0"]["node"] = _to_merkle_tree(pubkey_in[:len(pubkey_in)//2],
-                                                  hashlen,
-                                                  salt)
-        if "0" in mt0:
-            mtree["0"]["0"] = mt0["0"]
-            mtree["0"]["1"] = mt0["1"]
-            mtree["0"]["node"] = mt0["0"]["node"]
-        mt1, mtree["1"]["node"] = _to_merkle_tree(pubkey_in[len(pubkey_in)//2:],
-                                                  hashlen,
-                                                  salt)
-        if "0" in mt1:
-            mtree["1"]["0"] = mt1["0"]
-            mtree["1"]["1"] = mt1["1"]
-            mtree["1"]["node"] = mt1["0"]["node"]
-        return mtree, _nacl1_hash_function(
-                mtree["0"]["node"] + mtree["1"]["node"],
-                digest_size=hashlen,
-                key=salt,
-                encoder=_Nacl1RawEncoder)
-    mtree["0"]["node"] = pubkey_in[0]
-    mtree["1"]["node"] = pubkey_in[1]
-    return mtree, _nacl1_hash_function(
-            pubkey_in[0] + pubkey_in[1],
-            digest_size=hashlen,
-            key=salt,
-            encoder=_Nacl1RawEncoder)
+        mtree["0"] = _to_merkle_tree(pubkey_in[:len(pubkey_in)//2],
+                                     hashlen,
+                                     salt)
+        mtree["1"] = _to_merkle_tree(pubkey_in[len(pubkey_in)//2:],
+                                     hashlen,
+                                     salt)
+        mtree["node"] = _nacl1_hash_function(mtree["0"]["node"] + mtree["1"]["node"],
+                                             digest_size=hashlen,
+                                             key=salt,
+                                             encoder=_Nacl1RawEncoder)
+    else:
+        mtree["0"] = {"node": pubkey_in[0]}
+        mtree["1"] = {"node": pubkey_in[1]}
+        mtree["node"] = _nacl1_hash_function(pubkey_in[0] + pubkey_in[1],
+                                             digest_size=hashlen,
+                                             key=salt,
+                                             encoder=_Nacl1RawEncoder)
+    return mtree
 
 
 class _LevelKey:
@@ -107,9 +98,10 @@ class _LevelKey:
             self.backup["merkle_bottom"] = pubkey
         else:
             pubkey = self.backup["merkle_bottom"]
-        self.merkle_tree, self.pubkey = _to_merkle_tree(pubkey,
-                                                        hashlen,
-                                                        self.salt)
+        self.merkle_tree = _to_merkle_tree(pubkey,
+                                           hashlen,
+                                           self.salt)
+        self.pubkey = self.merkle_tree["node"]
         self.sig_index = sig_index
         if self.backup["signature"] is None:
             self.signature = None
