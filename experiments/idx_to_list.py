@@ -3,7 +3,9 @@ from libnacl import crypto_kdf_keygen as keygen
 from libnacl import crypto_kdf_derive_from_key as key_derive
 from libnacl import crypto_kdf_KEYBYTES as KEY_BYTES
 from nacl.hash import blake2b as hash_function
-from nacl.encoding import RawEncoder, Base32Encoder
+from nacl.encoding import RawEncoder, Base32Encoder, Base64Encoder
+from nacl.pwhash.argon2id import kdf, SALTBYTES
+from nacl.utils import random
 import json
 import time
 ## New and improved signature format:
@@ -240,7 +242,7 @@ def _deserialize(inp):
     return output
 
 class SigningKey:
-    def __init__(self, hashlen, otsbits, heights, seed=None, idx=0, backup=None, one_client=False):
+    def __init__(self, hashlen, otsbits, heights, seed=None, idx=0, backup=None, one_client=False, password=None):
         self.hashlen = hashlen
         self.otsbits = otsbits
         self.heights = heights
@@ -248,8 +250,16 @@ class SigningKey:
         self.backup = _deserialize(backup)
         self.idx = idx
         self.seed = seed
+        salt = None
         if seed is None:
-            self.seed = keygen()
+            if password is None:
+                self.seed = keygen()
+            else:
+                if self.backup is not None and "salt" in self.backup:
+                    salt = bytes.fromhex(self.backup["salt"])
+                else:
+                    salt = random(SALTBYTES)
+                self.seed = kdf(KEY_BYTES, password, salt)
         seedhash = hash_function(self.seed, digest_size=hashlen, encoder=Base32Encoder)
         init_list = idx_to_list(hashlen, otsbits, idx,heights)
         if self.backup is None:
@@ -260,6 +270,8 @@ class SigningKey:
             self.backup["idx"] = idx
             self.backup["seedhash"] = seedhash
             self.backup["key_cache"] = dict()
+            if salt is not None:
+                self.backup["salt"] = salt.hex()
         if self.backup["hashlen"] != hashlen or \
            self.backup["otsbits"] != otsbits or \
            self.backup["seedhash"] != seedhash or \
@@ -336,7 +348,8 @@ class SigningKey:
 
 
 
-key = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3])
+
+key = SigningKey(hashlen=24, otsbits=6, heights=[7, 3, 6], password=b"What kind of dumb password is this?")
 start = time.time()
 sig = key.sign_string("In een groen groen groen groen knollen knollen land")
 print(0,len(sig), time.time() - start)
@@ -344,9 +357,9 @@ backup = key.serialize()
 print(json.dumps(backup, indent=1))
 sign_index = key.idx
 seed2 = key.seed
-key2 = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3], seed=seed2, idx=sign_index, backup=backup)
+key2 = SigningKey(hashlen=24, otsbits=6, heights=[7, 3, 6], idx=sign_index, backup=backup, password=b"What kind of dumb password is this?")
 try:
-    for idx in range(0, 1 << 9):
+    for idx in range(0, 1 << 16):
         start = time.time()
         sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
         print(idx, len(sig), time.time() - start)
@@ -354,7 +367,7 @@ except RuntimeError as ex:
     print(ex)
 backup = key.serialize()
 sign_index = key.idx
-key3 = SigningKey(hashlen=24, otsbits=6, heights=[3, 3, 3], seed=seed2, idx=sign_index, backup=backup)
+key3 = SigningKey(hashlen=24, otsbits=6, heights=[7, 3, 6], seed=seed2, idx=sign_index, backup=backup)
 start = time.time()
 sig = key2.sign_string("In een groen groen groen groen knollen knollen land",compressed=True)
 print(idx, len(sig), time.time() - start)
