@@ -15,11 +15,14 @@ from nacl.pwhash.argon2id import kdf as _nacl1_kdf
 from nacl.pwhash.argon2id import SALTBYTES as _NACL1_SALTBYTES
 from nacl.utils import random as _nacl1_random
 
+
 def _ots_pairs_per_signature(hashlen, otsbits):
     return ((hashlen*8-1) // otsbits)+1
 
+
 def _ots_values_per_signature(hashlen, otsbits):
     return 2 * _ots_pairs_per_signature(hashlen, otsbits)
+
 
 def _to_merkle_tree(pubkey_in, hashlen, salt):
     mtree = dict()
@@ -53,14 +56,15 @@ def _to_merkle_tree(pubkey_in, hashlen, salt):
             key=salt,
             encoder=_Nacl1RawEncoder)
 
+
 class _LevelKey:
     # pylint: disable=too-many-instance-attributes
     def __init__(self, hashlen, otsbits, height, seed, startno, sig_index, backup):
         # pylint: disable=too-many-arguments
         self.startno = startno
-        self.hashlen=hashlen
-        self.otsbits=otsbits
-        self.height=height
+        self.hashlen = hashlen
+        self.otsbits = otsbits
+        self.height = height
         self.salt = _nacl2_key_derive(hashlen,
                                       startno,
                                       "Signatur",
@@ -94,7 +98,7 @@ class _LevelKey:
                                                encoder=_Nacl1RawEncoder)
                 big_pubkey.append(res)
             pubkey = list()
-            for idx1 in range(0,1 << height):
+            for idx1 in range(0, 1 << height):
                 pubkey.append(_nacl1_hash_function(
                     b"".join(big_pubkey[idx1*self.vps:idx1*self.vps+self.vps]),
                     digest_size=hashlen,
@@ -106,7 +110,7 @@ class _LevelKey:
         self.merkle_tree, self.pubkey = _to_merkle_tree(pubkey,
                                                         hashlen,
                                                         self.salt)
-        self.sig_index=sig_index
+        self.sig_index = sig_index
         if self.backup["signature"] is None:
             self.signature = None
         else:
@@ -141,23 +145,23 @@ class _LevelKey:
                                   byteorder='big',
                                   signed=True)
         as_int_list = list()
-        for _ in range(0,self.chop_count):
+        for _ in range(0, self.chop_count):
             as_int_list.append(as_bigno % (1 << self.otsbits))
             as_bigno = as_bigno >> self.otsbits
         as_int_list.reverse()
-        my_ots_key =  self.privkey[self.sig_index * self.vps: (self.sig_index + 1) * self.vps]
+        my_ots_key = self.privkey[self.sig_index * self.vps: (self.sig_index + 1) * self.vps]
         my_sigparts = [
                 [
                     as_int_list[i//2],
                     my_ots_key[i],
                     my_ots_key[i+1]
-                ] for i in range(0,len(my_ots_key),2)
+                ] for i in range(0, len(my_ots_key), 2)
             ]
         for sigpart in my_sigparts:
             count1 = sigpart[0] + 1
             count2 = (1 << self.otsbits) - sigpart[0]
             sig1 = sigpart[1]
-            for _ in range(0,count1):
+            for _ in range(0, count1):
                 sig1 = _nacl1_hash_function(
                         sig1,
                         digest_size=self.hashlen,
@@ -165,7 +169,7 @@ class _LevelKey:
                         encoder=_Nacl1RawEncoder)
             signature += sig1
             sig2 = sigpart[2]
-            for _ in range(0,count2):
+            for _ in range(0, count2):
                 sig2 = _nacl1_hash_function(
                         sig2,
                         digest_size=self.hashlen,
@@ -175,12 +179,12 @@ class _LevelKey:
         return signature
 
 
-
 def _deep_count(hash_len, ots_bits, harr):
     if len(harr) == 1:
         return 1 + _ots_values_per_signature(hash_len, ots_bits) * (1 << harr[0])
     ccount = _deep_count(hash_len, ots_bits, harr[1:])
     return 1 + (1 << harr[0]) * (_ots_values_per_signature(hash_len, ots_bits) + ccount)
+
 
 def _idx_to_list(hash_len, ots_bits, idx, harr, start=0):
     if len(harr) == 1:
@@ -195,20 +199,21 @@ def _idx_to_list(hash_len, ots_bits, idx, harr, start=0):
         lindex * _deep_count(hash_len, ots_bits, harr[1:])
     return [[start, lindex]] + _idx_to_list(hash_len, ots_bits, dindex, harr[1:], dstart)
 
+
 def _jsonable(inp):
     # pylint: disable=too-many-branches
-    if isinstance(inp,dict):
+    if isinstance(inp, dict):
         output = dict()
-        for key,val in inp.items():
+        for key, val in inp.items():
             if isinstance(val, (int, float, str, bool, type(None))):
                 output[key] = val
-            elif isinstance(val,(dict, list)):
+            elif isinstance(val, (dict, list)):
                 if key == "merkle_bottom":
                     output[key] = [v.hex() for v in val]
                 else:
                     output[key] = _jsonable(val)
             elif isinstance(val, bytes):
-                if key in ["seedhash","signature"]:
+                if key in ["seedhash", "signature"]:
                     output[key] = val.hex()
                 else:
                     raise RuntimeError("Unexpected bytes type data in backup structure")
@@ -219,7 +224,7 @@ def _jsonable(inp):
         for val in inp:
             if isinstance(val, (int, float, str, bool, type(None))):
                 output.append(val)
-            elif isinstance(val,(dict, list)):
+            elif isinstance(val, (dict, list)):
                 output.append(_jsonable(val))
             else:
                 raise RuntimeError("Unexpected backup data type")
@@ -229,20 +234,21 @@ def _jsonable(inp):
         raise RuntimeError("Unexpected backup data type")
     return output
 
+
 def _dejsonable(inp):
     # pylint: disable=too-many-branches
-    if isinstance(inp,dict):
+    if isinstance(inp, dict):
         output = dict()
-        for key,val in inp.items():
+        for key, val in inp.items():
             if isinstance(val, (int, float, bool, type(None))):
                 output[key] = val
-            elif isinstance(val,(dict, list)):
+            elif isinstance(val, (dict, list)):
                 if key == "merkle_bottom":
                     output[key] = [bytes.fromhex(v) for v in val]
                 else:
                     output[key] = _dejsonable(val)
             elif isinstance(val, str):
-                if key in ["seedhash","signature"]:
+                if key in ["seedhash", "signature"]:
                     output[key] = bytes.fromhex(val)
                 else:
                     output[key] = val
@@ -253,7 +259,7 @@ def _dejsonable(inp):
         for val in inp:
             if isinstance(val, (int, float, str, bool, type(None))):
                 output.append(val)
-            elif isinstance(val,(dict, list)):
+            elif isinstance(val, (dict, list)):
                 output.append(_dejsonable(val))
             else:
                 raise RuntimeError("Unexpected backup data type")
@@ -262,6 +268,7 @@ def _dejsonable(inp):
     else:
         raise RuntimeError("Unexpected backup data type")
     return output
+
 
 class SigningKey:
     """Class for creating multi-level-key coinZdense signatures"""
@@ -283,8 +290,9 @@ class SigningKey:
             if password is None:
                 self.seed = _nacl2_keygen()
             else:
-                salt = bytes.fromhex(self.backup["salt"]) if (self.backup is not None and
-                        "salt" in self.backup) else _nacl1_random(_NACL1_SALTBYTES)
+                salt = bytes.fromhex(self.backup["salt"]) if \
+                    (self.backup is not None and "salt" in self.backup) \
+                    else _nacl1_random(_NACL1_SALTBYTES)
                 self.seed = _nacl1_kdf(_NACL2_KEY_BYTES,
                                        password,
                                        salt)
@@ -295,8 +303,8 @@ class SigningKey:
             self.backup["heights"] = heights
             self.backup["idx"] = idx
             self.backup["seedhash"] = _nacl1_hash_function(self.seed,
-                                                    digest_size=hashlen,
-                                                    encoder=_Nacl1Base32Encoder)
+                                                           digest_size=hashlen,
+                                                           encoder=_Nacl1Base32Encoder)
             self.backup["key_cache"] = dict()
             if salt is not None:
                 self.backup["salt"] = salt.hex()
@@ -313,7 +321,7 @@ class SigningKey:
             raise RuntimeError("Backup has a higher index number than blockchain")
         if self.backup["idx"] < idx and one_client:
             raise RuntimeError("Another client may be using a copy of your signing key")
-        init_list = _idx_to_list(hashlen, otsbits, idx,heights)
+        init_list = _idx_to_list(hashlen, otsbits, idx, heights)
         drop = set()
         for key in self.backup["key_cache"].keys():
             if key not in {val[0] for val in init_list}:
@@ -358,7 +366,7 @@ class SigningKey:
                             vals[0],
                             vals[1],
                             None)
-                    if index>0:
+                    if index > 0:
                         self.level_keys[index].get_signed_by_parent(self.level_keys[index - 1])
                     self.backup["key_cache"][vals[0]] = self.level_keys[index].backup
                     del self.backup["key_cache"][self.level_keys[index].startno]
@@ -366,7 +374,6 @@ class SigningKey:
                     self.level_keys[index].sig_index = vals[1]
         self.idx = new_idx
         self.backup["idx"] = new_idx
-
 
     def sign_digest(self, digest, compressed=False):
         """Sign a digest using a complete multi-level signature"""
@@ -392,13 +399,15 @@ class SigningKey:
                                       digest_size=self.hashlen,
                                       encoder=_Nacl1RawEncoder)
         return self.sign_digest(digest, compressed)
-    def sign_data(self,msg, compressed=False):
+
+    def sign_data(self, msg, compressed=False):
         """Sign a bytes using a complete multi-level signature"""
         digest = _nacl1_hash_function(msg,
                                       digest_size=self.hashlen,
                                       encoder=_Nacl1RawEncoder)
         return self.sign_digest(digest,
                                 compressed)
+
     def serialize(self):
         """Serialize signing key state to a JSON string"""
         return _json.dumps(_jsonable(self.backup),
