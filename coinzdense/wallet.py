@@ -37,6 +37,18 @@ class _Wallet:
                 self.privid = privid
             def __bytes__(self):
                 return self.key
+            def __getitem__(self, subsubkey_name):
+                subprivid = _nacl1_hash_function(subsubkey_name.encode(),
+                                                 digest_size=24,
+                                                 key=self.privid,
+                                                 encoder=_Nacl1RawEncoder)
+                twopart = _nacl1_hash_function(subsubkey_name.encode(),
+                                               digest_size=_NACL1_SALTBYTES + Nacl1SecretBox.KEY_SIZE,
+                                               key=self.key,
+                                               encoder=_Nacl1RawEncoder)
+                salt = twopart[:_NACL1_SALTBYTES]
+                key = twopart[_NACL1_SALTBYTES:]
+                return PartialWallet(salt, key, privid)
             def create_wallet(self,password):
                 wallet_key = _nacl1_kdf(_NACL2_KEY_BYTES,
                                         password,

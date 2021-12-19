@@ -265,7 +265,7 @@ def _dejsonable(inp):
 class SigningKey:
     """Class for creating multi-level-key coinZdense signatures"""
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, hashlen, otsbits, heights, key, idx=0, backup=None,
+    def __init__(self, hashlen, otsbits, heights, wallet, idx=0, backup=None,
                  one_client=False):
         # pylint: disable=too-many-locals, too-many-arguments, too-many-branches
         self.hashlen = hashlen
@@ -276,7 +276,8 @@ class SigningKey:
         if backup is not None:
             self.backup = _dejsonable(_json.loads(backup))
         self.idx = idx
-        self.key = key
+        self.key = wallet.key
+        self.privid = wallet.privid
         salt = None
         if self.backup is None:
             self.backup = dict()
