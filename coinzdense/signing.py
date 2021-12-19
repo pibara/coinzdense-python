@@ -50,7 +50,7 @@ def _to_merkle_tree(pubkey_in, hashlen, salt):
 
 class _LevelKey:
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, hashlen, otsbits, height, seed, startno, sig_index, backup):
+    def __init__(self, hashlen, otsbits, height, key, startno, sig_index, backup):
         # pylint: disable=too-many-arguments
         self.startno = startno
         self.hashlen = hashlen
@@ -59,7 +59,7 @@ class _LevelKey:
         self.salt = _nacl2_key_derive(hashlen,
                                       startno,
                                       "Signatur",
-                                      seed)
+                                      key)
         self.privkey = list()
         self.vps = _ots_values_per_signature(hashlen,
                                              otsbits)
@@ -71,7 +71,7 @@ class _LevelKey:
                     _nacl2_key_derive(hashlen,
                                       idx,
                                       "Signatur",
-                                      seed)
+                                      key)
                     )
         self.backup = backup
         if self.backup is None:
@@ -265,8 +265,8 @@ def _dejsonable(inp):
 class SigningKey:
     """Class for creating multi-level-key coinZdense signatures"""
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, hashlen, otsbits, heights, seed=None, idx=0, backup=None,
-                 one_client=False, password=None):
+    def __init__(self, hashlen, otsbits, heights, key, idx=0, backup=None,
+                 one_client=False):
         # pylint: disable=too-many-locals, too-many-arguments, too-many-branches
         self.hashlen = hashlen
         self.otsbits = otsbits
@@ -276,25 +276,15 @@ class SigningKey:
         if backup is not None:
             self.backup = _dejsonable(_json.loads(backup))
         self.idx = idx
-        self.seed = seed
+        self.key = key
         salt = None
-        if seed is None:
-            if password is None:
-                self.seed = _nacl2_keygen()
-            else:
-                salt = bytes.fromhex(self.backup["salt"]) if \
-                    (self.backup is not None and "salt" in self.backup) \
-                    else _nacl1_random(_NACL1_SALTBYTES)
-                self.seed = _nacl1_kdf(_NACL2_KEY_BYTES,
-                                       password,
-                                       salt)
         if self.backup is None:
             self.backup = dict()
             self.backup["hashlen"] = hashlen
             self.backup["otsbits"] = otsbits
             self.backup["heights"] = heights
             self.backup["idx"] = idx
-            self.backup["seedhash"] = _nacl1_hash_function(self.seed,
+            self.backup["seedhash"] = _nacl1_hash_function(self.key,
                                                            digest_size=hashlen,
                                                            encoder=_Nacl1Base32Encoder)
             self.backup["key_cache"] = dict()
@@ -305,10 +295,10 @@ class SigningKey:
            self.backup["heights"] != heights:
             raise RuntimeError("Mismatch of key-structure params and backup")
         if self.backup["seedhash"] != _nacl1_hash_function(
-                self.seed,
+                self.key,
                 digest_size=hashlen,
                 encoder=_Nacl1Base32Encoder):
-            raise RuntimeError("Wrong password or seed")
+            raise RuntimeError("Wrong key")
         if self.backup["idx"] > idx:
             raise RuntimeError("Backup has a higher index number than blockchain")
         if self.backup["idx"] < idx and one_client:
@@ -331,7 +321,7 @@ class SigningKey:
                         hashlen,
                         otsbits,
                         heights[index],
-                        self.seed,
+                        self.key,
                         init_vals[0],
                         init_vals[1],
                         restore_info[index]
@@ -354,7 +344,7 @@ class SigningKey:
                             self.hashlen,
                             self.otsbits,
                             self.heights[index],
-                            self.seed,
+                            self.key,
                             vals[0],
                             vals[1],
                             None)
