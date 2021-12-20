@@ -82,6 +82,7 @@ def create_wallet(salt, key, password, keypath=""):
 
 def open_wallet(wdata, password, keypath=""):
     # FIXME assert wdata length
+    print("Opening wallet", keypath,"with password", password)
     salt = wdata[:_NACL1_SALTBYTES]
     encwallet = wdata[_NACL1_SALTBYTES:]
     privid = _keypath_to_id(keypath)

@@ -178,7 +178,9 @@ def _deep_count(hash_len, ots_bits, harr):
     return 1 + (1 << harr[0]) * (_ots_values_per_signature(hash_len, ots_bits) + ccount)
 
 
-def _idx_to_list(hash_len, ots_bits, idx, harr, start=0):
+def _idx_to_list(hash_len, ots_bits, idx, harr, start=None):
+    if start is None:
+        start = (1 << sum(harr))
     if len(harr) == 1:
         return [[start, idx]]
     bits = 0
@@ -358,11 +360,23 @@ class SigningKey:
         self.idx = new_idx
         self.backup["idx"] = new_idx
 
-    def sign_digest(self, digest, compressed=False):
+    def _sign_digest(self, digest, salt, compressed):
         """Sign a digest using a complete multi-level signature"""
         if self.idx > self.max_idx:
             raise RuntimeError("SigningKey exhausted")
-        rval = b""
+        rval = self.privid
+        sigcount = 1
+        done = False
+        for level_key in reversed(self.level_keys[1:]):
+            if not done:
+                if level_key.sig_index != 0 and compressed:
+                    done = True
+                else:
+                    sigcount += 1
+        rval += sigcount.to_bytes(1,'big')
+        rval += self.idx.to_bytes(8, 'big')
+        rval += salt
+        rval += digest
         for level_key in reversed(self.level_keys):
             rval += level_key.pubkey
         rval += self.idx.to_bytes(8, 'big')
@@ -378,18 +392,28 @@ class SigningKey:
 
     def sign_string(self, msg, compressed=False):
         """Sign a string using a complete multi-level signature"""
+        salt = _nacl2_key_derive(self.hashlen,
+                                 self.idx,
+                                 "Signatur",
+                                 self.key)
         digest = _nacl1_hash_function(msg.encode("latin1"),
                                       digest_size=self.hashlen,
+                                      key=salt,
                                       encoder=_Nacl1RawEncoder)
-        return self.sign_digest(digest, compressed)
+        return self._sign_digest(digest, salt, compressed)
 
     def sign_data(self, msg, compressed=False):
         """Sign a bytes using a complete multi-level signature"""
+        salt = _nacl2_key_derive(self.hashlen,
+                                 self.idx,
+                                 "Signatur",
+                                 self.key)
         digest = _nacl1_hash_function(msg,
                                       digest_size=self.hashlen,
                                       encoder=_Nacl1RawEncoder)
-        return self.sign_digest(digest,
-                                compressed)
+        return self._sign_digest(digest,
+                                 salt,
+                                 compressed)
 
     def serialize(self):
         """Serialize signing key state to a JSON string"""

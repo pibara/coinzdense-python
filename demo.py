@@ -9,34 +9,59 @@ import coinzdense.signing
 import coinzdense.validation
 import coinzdense.wallet
 
-
-wallet_path = "./coinzdense.wallet"
-passphrase = b"This is a stupid passphrase"
-if os.path.exists(wallet_path):
-    with open(wallet_path,"rb") as wfil:
-        wallet = coinzdense.wallet.open_wallet(wfil.read(),
-                                               passphrase)
-        print("Using existing wallet")
+# here we store our wallets
+owner_wallet_path = "./coinzdense-owner.wallet"
+posting_wallet_path = "./coinzdense-posting.wallet"
+# hard-coded passphrase, bad idea, but this is just a demo
+owner_passphrase = b"This is a stupid passphrase"
+posting_passphrase = b"Another dumb password"
+# Something we want to sign
+message = "Ok, ok, I admit it, it was me, I did it."
+# check if posting wallet exists
+if os.path.exists(posting_wallet_path):
+    # Use existing posting wallet if it exists
+    print("Reading posting wallet")
+    with open(posting_wallet_path,"rb") as wfil:
+        subwallet = coinzdense.wallet.open_wallet(wfil.read(),
+                                                  posting_passphrase,
+                                                  "ACTIVE/POSTING")
 else:
-    salt = random(SALTBYTES)
-    key = random(SecretBox.KEY_SIZE)
-    wallet = coinzdense.wallet.create_wallet(salt,
+    # Ok, no posting wallet, check if the owner wallet does exist
+    if os.path.exists(owner_wallet_path):
+        # If it does, open it
+        print("Reading owner wallet")
+        with open(owner_wallet_path,"rb") as wfil:
+            wallet = coinzdense.wallet.open_wallet(wfil.read(),
+                                                   owner_passphrase)
+    else:
+        print("Creating owner wallet")
+        # Get some randomness
+        salt = random(SALTBYTES)
+        key = random(SecretBox.KEY_SIZE)
+        # create the new wallet
+        wallet = coinzdense.wallet.create_wallet(salt,
                                              key,
-                                             passphrase)
-    with open(wallet_path,"wb") as wfil:
-        wfil.write(bytes(wallet))
-        print("Saved wallet for later")
+                                             owner_passphrase)
+        # save it to disk
+        print("Saving owner wallet")
+        with open(owner_wallet_path,"wb") as wfil:
+            wfil.write(bytes(wallet))
+    # Create a derived wallet with it's own passphrase
+    print("Deriving posting wallet")
+    subwallet = wallet["ACTIVE"]["POSTING"].create_wallet(posting_passphrase)
+    # Write it to disk
+    print("Saving posting wallet")
+    with open(posting_wallet_path,"wb") as wfil:
+        wfil.write(bytes(subwallet))
 
-subwallet = wallet["ACTIVE"]["POSTING"].create_wallet(b"Another dumb password")
-
+# Use the open wallet to make ourselves a 3-level signing-key
 key = coinzdense.signing.SigningKey(hashlen=24, otsbits=6, heights=[2, 3, 4], wallet=subwallet)
+# Mah
+sig = key.sign_string(message)
 
 
-venv = coinzdense.validation.ValidationEnv(hashlen=24, otsbits=6, heights=[2, 3, 4])
-
-start = time.time()
-sig = key.sign_string("In een groen groen groen groen knollen knollen land")
-print(0,len(sig), time.time() - start)
+keystructure = {"ACTIVE" : { "POSTING" : None}}
+venv = coinzdense.validation.ValidationEnv(hashlen=24, otsbits=6, heights=[2, 3, 4], keystructure=keystructure)
 valsig = venv.signature(sig)
 print(valsig.get_pubkey(), valsig.validate())
 backup = key.serialize()
