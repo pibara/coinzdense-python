@@ -1,0 +1,23 @@
+{
+  "appname": "HIVISH-DEMO",
+  "hashlen": 24,
+  "otsbits": 11,
+  "keyspace": [
+     {
+         "heights" : [8, 8, 7],
+	 "reserve": 16
+     },
+     {
+         "heights" : [8, 8, 7],
+	 "reserve": 16
+     },
+     {
+         "heights": [8, 8, 8]
+     }
+  ],
+  "hierarchy": {
+      "ACTIVE": {
+          "POSTING": {}
+      }
+  }
+}
