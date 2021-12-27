@@ -1,0 +1,91 @@
+{
+  "appname": "HIVISH-DEMO-2",
+  "hashlen": 24,
+  "otsbits": 11,
+  "keyspace": [
+     {
+         "heights" : [8, 8, 7],
+	 "reserve": 7
+     },
+     {
+         "heights" : [8, 8, 7],
+	 "reserve": 7
+     },
+     {
+         "heights": [8, 8, 8],
+	 "reserve": 6
+     },
+     {
+         "heights": [8, 8, 8],
+	 "reserve": 6
+     },
+     {
+         "heights": [8, 8, 8],
+	 "reserve": 8
+     },
+     {
+         "heights": [8, 8, 8]
+     }
+  ],
+  "hierarchy": {
+      "ACTIVE": {
+          "POSTING": {
+	      "vote": {},
+              "comment": {},
+	      "delete_comment": {},
+	      "custom_json": {
+	         "actifit": {},
+                 "cbm": {
+                     "cbm__pub__drink_beer": {},
+		     "cbm__craft__start": {}
+		 },
+		 "dlux": {
+                     "dlux_dex_hive_sell": {},
+		     "dlux_ft_bid": {}
+		 },
+		 "exode": {
+                     "exode_newgame": {},
+		     "exode_join_squadron": {},
+		     "exode_leave_squadron": {}
+		 },
+		 "pm": {
+                     "pm_create_bid": {},
+		     "pm_cancel_bid": {}
+		 },
+		 "sm": {
+	             "sm_find_match": {},
+		     "sm_start_match": {},
+		     "sm_cancel_match": {}
+		 }
+	      },
+	      "comment_options": {},
+	      "claim_reward_balance": {}
+	  },
+	  "transfer": {},
+	  "transfer_to_vesting": {},
+	  "withdraw_vesting": {},
+	  "limit_order_create": {},
+	  "limit_order_cancel": {},
+	  "convert": {},
+	  "create_claimed_account": {},
+	  "claim_account": {},
+	  "account_update": {},
+	  "account_witness_vote": {},
+          "account_witness_proxy": {},
+	  "custom": {},
+	  "request_account_recovery": {},
+	  "escrow_transfer": {},
+	  "escrow_dispute": {},
+	  "escrow_release": {},
+	  "escrow_approve": {},
+	  "transfer_to_savings": {},
+	  "transfer_from_savings": {},
+	  "cancel_transfer_from_savings": {},
+	  "delegate_vesting_shares": {}
+      },
+      "recover_account": {},
+      "change_recovery_account": {},
+      "decline_voting_rights": {},
+      "set_reset_account": {}
+  }
+}
