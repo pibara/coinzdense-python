@@ -1,0 +1,5 @@
+* Have backup be used in demo2.py
+* Have reading back posting wallet work and restore the proper key/backup
+* Implement validation
+* Actually implement horizontal key relationships
+* Add priv-level-identity to wallets and backups
