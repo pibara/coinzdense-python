@@ -99,8 +99,6 @@ class BlockChainEnv:
             subconf["sub_path"] = self.subpath[:] + [key]
             return BlockChainEnv(subconf)
         else:
-            print(self.hierarchy)
-            print(self.subpath)
             raise KeyError("No sub-key hierarchy named " + key)
 
     def get_signing_key(self, wallet, idx=0, idx2=0, backup=None):

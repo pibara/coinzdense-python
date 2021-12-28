@@ -13,20 +13,12 @@ class _Signature:
         header_len = 9 + hashlen * (3 + len(heights))
         if len(signature) > header_len:
             self.privhash = signature[:hashlen]
-            print("privhash:", self.privhash.hex())
             self.sigcount = int.from_bytes(signature[hashlen:hashlen+1],"big")
-            print("sigcount:", self.sigcount)
             self.sigindex = int.from_bytes(signature[hashlen+1:hashlen+9],"big")
-            print("sigindex:", self.sigindex)
             self.msgsalt = signature[hashlen+9:2*hashlen+9]
-            print("msgsalt:", self.msgsalt.hex()) 
             self.msgdigest = signature[2*hashlen+9: 3*hashlen+9]
-            print("msgdigest:", self.msgdigest.hex())
             pubkeys = signature[3*hashlen+9:header_len]
             self.pubkeys = [pubkeys[i:i+hashlen] for i in range(0,len(pubkeys),hashlen)]
-            print("pubkeys:")
-            for pubkey in self.pubkeys:
-                print(" *", pubkey.hex())
             ## Fixme: rest of signature
         else:
             raise RuntimeError("Invalid signature size")

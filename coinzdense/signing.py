@@ -65,7 +65,6 @@ class _LevelKey:
                                              otsbits)
         self.chop_count = _ots_pairs_per_signature(hashlen,
                                                    otsbits)
-        print("Calculating private key")
         for idx in range(startno + 1,
                          startno + 1 + self.vps * (1 << height)):
             self.privkey.append(
@@ -80,7 +79,6 @@ class _LevelKey:
             self.backup["merkle_bottom"] = None
             self.backup["signature"] = None
         if self.backup["merkle_bottom"] is None:
-            print("Calculating big pubkey")
             big_pubkey = list()
             for privpart in self.privkey:
                 res = privpart
@@ -90,7 +88,6 @@ class _LevelKey:
                                                key=self.salt,
                                                encoder=_Nacl1RawEncoder)
                 big_pubkey.append(res)
-            print("Reducing to smaller pubkey")
             pubkey = list()
             for idx1 in range(0, 1 << height):
                 pubkey.append(_nacl1_hash_function(
@@ -100,9 +97,7 @@ class _LevelKey:
                     encoder=_Nacl1RawEncoder))
             self.backup["merkle_bottom"] = pubkey
         else:
-            print("Using backup pubkey")
             pubkey = self.backup["merkle_bottom"]
-        print("Calculating merkle root")
         self.merkle_tree = _to_merkle_tree(pubkey,
                                            hashlen,
                                            self.salt)
@@ -112,7 +107,6 @@ class _LevelKey:
             self.signature = None
         else:
             self.signature = self.backup["signature"]
-        print("Level key done")
 
     def get_signed_by_parent(self, parent):
         """Get signed by level key one leve up"""
@@ -276,7 +270,6 @@ class SigningKey:
     def __init__(self, hashlen, otsbits, keyspace, keypath, keyhierarchy, wallet, idx, idx2,
                  backup, kdf_offset=0, horizontal_signature=None):
         # pylint: disable=too-many-locals, too-many-arguments, too-many-branches
-        print("SigningKey constructor")
         self.hashlen = hashlen
         self.otsbits = otsbits
         self.heights = keyspace[0]["heights"]
@@ -334,7 +327,6 @@ class SigningKey:
         restore_info = [self.backup["key_cache"][val[0]] for val in init_list]
         self.level_keys = list()
         for index, init_vals in enumerate(init_list):
-            print("Making level key", index, hashlen, otsbits, self.heights[index], init_vals)
             self.level_keys.append(
                     _LevelKey(
                         hashlen,
@@ -349,7 +341,6 @@ class SigningKey:
             if index > 0:
                 self.level_keys[index].get_signed_by_parent(self.level_keys[index-1])
             self.backup["key_cache"][init_vals[0]] = self.level_keys[index].backup
-            print("Created")
 
     def _increment_index(self):
         new_idx = self.idx + 1
