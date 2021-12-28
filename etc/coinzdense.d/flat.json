@@ -1,0 +1,10 @@
+{
+  "appname": "DEMO-01",
+  "hashlen": 32,
+  "otsbits": 13,
+  "keyspace": [
+      {
+         "heights": [9, 9, 8, 8]
+      }
+  ]
+}

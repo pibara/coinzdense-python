@@ -65,6 +65,7 @@ class _LevelKey:
                                              otsbits)
         self.chop_count = _ots_pairs_per_signature(hashlen,
                                                    otsbits)
+        print("Calculating private key")
         for idx in range(startno + 1,
                          startno + 1 + self.vps * (1 << height)):
             self.privkey.append(
@@ -79,6 +80,7 @@ class _LevelKey:
             self.backup["merkle_bottom"] = None
             self.backup["signature"] = None
         if self.backup["merkle_bottom"] is None:
+            print("Calculating big pubkey")
             big_pubkey = list()
             for privpart in self.privkey:
                 res = privpart
@@ -88,6 +90,7 @@ class _LevelKey:
                                                key=self.salt,
                                                encoder=_Nacl1RawEncoder)
                 big_pubkey.append(res)
+            print("Reducing to smaller pubkey")
             pubkey = list()
             for idx1 in range(0, 1 << height):
                 pubkey.append(_nacl1_hash_function(
@@ -97,7 +100,9 @@ class _LevelKey:
                     encoder=_Nacl1RawEncoder))
             self.backup["merkle_bottom"] = pubkey
         else:
+            print("Using backup pubkey")
             pubkey = self.backup["merkle_bottom"]
+        print("Calculating merkle root")
         self.merkle_tree = _to_merkle_tree(pubkey,
                                            hashlen,
                                            self.salt)
@@ -107,6 +112,7 @@ class _LevelKey:
             self.signature = None
         else:
             self.signature = self.backup["signature"]
+        print("Level key done")
 
     def get_signed_by_parent(self, parent):
         """Get signed by level key one leve up"""
@@ -267,17 +273,26 @@ def _dejsonable(inp):
 class SigningKey:
     """Class for creating multi-level-key coinZdense signatures"""
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, hashlen, otsbits, heights, wallet, idx=0, backup=None,
-                 one_client=False):
+    def __init__(self, hashlen, otsbits, keyspace, keypath, keyhierarchy, wallet, idx, idx2,
+                 backup, kdf_offset=0, horizontal_signature=None):
         # pylint: disable=too-many-locals, too-many-arguments, too-many-branches
+        print("SigningKey constructor")
         self.hashlen = hashlen
         self.otsbits = otsbits
-        self.heights = heights
-        self.max_idx = (1 << sum(heights)) - 1
+        self.heights = keyspace[0]["heights"]
+        reserve = keyspace[0]["reserve"]
+        self.keyspace = keyspace[1:]
+        self.hierarchy = keyhierarchy
+        self.keypath = keypath
+        self.max_idx1 = (1 << sum(self.heights)) - (1 << reserve) - 1
+        self.max_idx2 = (1 << reserve) - 1
         self.backup = None
+        self.horizontal_signature=horizontal_signature
+        self.kdf_offset = kdf_offset
         if backup is not None:
             self.backup = _dejsonable(_json.loads(backup))
         self.idx = idx
+        self.idx2 = idx2
         self.key = wallet.key
         self.privid = wallet.privid
         salt = None
@@ -285,7 +300,7 @@ class SigningKey:
             self.backup = dict()
             self.backup["hashlen"] = hashlen
             self.backup["otsbits"] = otsbits
-            self.backup["heights"] = heights
+            self.backup["heights"] = self.heights
             self.backup["idx"] = idx
             self.backup["seedhash"] = _nacl1_hash_function(self.key,
                                                            digest_size=hashlen,
@@ -295,7 +310,7 @@ class SigningKey:
                 self.backup["salt"] = salt.hex()
         if self.backup["hashlen"] != hashlen or \
            self.backup["otsbits"] != otsbits or \
-           self.backup["heights"] != heights:
+           self.backup["heights"] != self.heights:
             raise RuntimeError("Mismatch of key-structure params and backup")
         if self.backup["seedhash"] != _nacl1_hash_function(
                 self.key,
@@ -306,7 +321,7 @@ class SigningKey:
             raise RuntimeError("Backup has a higher index number than blockchain")
         if self.backup["idx"] < idx and one_client:
             raise RuntimeError("Another client may be using a copy of your signing key")
-        init_list = _idx_to_list(hashlen, otsbits, idx, heights)
+        init_list = _idx_to_list(hashlen, otsbits, idx, self.heights)
         drop = set()
         for key in self.backup["key_cache"].keys():
             if key not in {val[0] for val in init_list}:
@@ -319,11 +334,12 @@ class SigningKey:
         restore_info = [self.backup["key_cache"][val[0]] for val in init_list]
         self.level_keys = list()
         for index, init_vals in enumerate(init_list):
+            print("Making level key", index, hashlen, otsbits, self.heights[index], init_vals)
             self.level_keys.append(
                     _LevelKey(
                         hashlen,
                         otsbits,
-                        heights[index],
+                        self.heights[index],
                         self.key,
                         init_vals[0],
                         init_vals[1],
@@ -333,10 +349,11 @@ class SigningKey:
             if index > 0:
                 self.level_keys[index].get_signed_by_parent(self.level_keys[index-1])
             self.backup["key_cache"][init_vals[0]] = self.level_keys[index].backup
+            print("Created")
 
     def _increment_index(self):
         new_idx = self.idx + 1
-        if new_idx <= self.max_idx:
+        if new_idx <= self.max_idx1:
             init_list = _idx_to_list(self.hashlen,
                                      self.otsbits,
                                      new_idx,
@@ -362,7 +379,7 @@ class SigningKey:
 
     def _sign_digest(self, digest, salt, compressed):
         """Sign a digest using a complete multi-level signature"""
-        if self.idx > self.max_idx:
+        if self.idx > self.max_idx1:
             raise RuntimeError("SigningKey exhausted")
         rval = self.privid
         sigcount = 1

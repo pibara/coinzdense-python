@@ -51,7 +51,7 @@ def keystruct_to_dict(keystructure, parent=None, parent_path=None):
         if parent_path is None:
             path = key
         else:
-            path = parent_path + "/" + key
+            path = parent_path + [key]
         rval[subkey_digest.hex()] = path
         val = keystructure[key]
         if isinstance(val, dict):
@@ -63,14 +63,11 @@ def keystruct_to_dict(keystructure, parent=None, parent_path=None):
 
 
 class ValidationEnv:
-    def __init__(self, hashlen, otsbits, heights, keystructure=None):
+    def __init__(self, hashlen, otsbits, keyspace, path, hierarchy):
         self.hashlen = hashlen
         self.otsbits = otsbits
-        self.heights = heights
-        if keystructure is None:
-            self.keystructure = keystruct_to_dict({})
-        else:
-            self.keystructure = keystruct_to_dict(keystructure)
+        self.heights = keyspace[0]["heights"]
+        self.keystructure = keystruct_to_dict(hierarchy, parent_path=path)
         print(self.keystructure)
 
     def signature(self, signature):

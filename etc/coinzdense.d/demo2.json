@@ -4,27 +4,27 @@
   "otsbits": 11,
   "keyspace": [
      {
-         "heights" : [8, 8, 7],
-	 "reserve": 7
-     },
-     {
-         "heights" : [8, 8, 7],
-	 "reserve": 7
-     },
-     {
-         "heights": [8, 8, 8],
-	 "reserve": 6
-     },
-     {
-         "heights": [8, 8, 8],
-	 "reserve": 6
-     },
-     {
-         "heights": [8, 8, 8],
+         "heights" : [9, 9],
 	 "reserve": 8
      },
      {
-         "heights": [8, 8, 8]
+         "heights" : [9, 9, 8],
+	 "reserve": 8
+     },
+     {
+         "heights": [9, 8, 8, 8],
+	 "reserve": 8
+     },
+     {
+         "heights": [8, 8],
+	 "reserve": 9
+     },
+     {
+         "heights": [8, 8],
+	 "reserve": 9
+     },
+     {
+         "heights": [8, 8]
      }
   ],
   "hierarchy": {

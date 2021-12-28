@@ -7,17 +7,15 @@ from nacl.hash import blake2b as _nacl1_hash_function
 from nacl.encoding import RawEncoder as _Nacl1RawEncoder
 from nacl.pwhash.argon2id import kdf as _nacl1_kdf
 
-def _keypath_to_id(keypath):
+def _keypath_to_id(path):
     rval = _nacl1_hash_function(b"",
                                 digest_size=24,
                                 encoder=_Nacl1RawEncoder)
-    if keypath:
-        parts = keypath.lower().split("/")
-        for part in parts:
-            rval = _nacl1_hash_function(part.encode(),
-                                digest_size=24,
-                                key=rval,
-                                encoder=_Nacl1RawEncoder)
+    for part in path:
+        rval = _nacl1_hash_function(part.encode(),
+                                    digest_size=24,
+                                    key=rval,
+                                    encoder=_Nacl1RawEncoder)
     return rval
 
 class _Wallet:
@@ -49,7 +47,7 @@ class _Wallet:
                 salt = twopart[:_NACL1_SALTBYTES]
                 key = twopart[_NACL1_SALTBYTES:]
                 return PartialWallet(salt, key, privid)
-            def create_wallet(self,password):
+            def create_wallet(self, salt, key, password):
                 wallet_key = _nacl1_kdf(_NACL2_KEY_BYTES,
                                         password,
                                         self.salt)
@@ -69,10 +67,10 @@ class _Wallet:
         return PartialWallet(salt, key, privid)
 
 
-def create_wallet(salt, key, password, keypath=""):
+def create_wallet(salt, key, password, path):
     assert len(salt) == _NACL1_SALTBYTES
     assert len(key) == Nacl1SecretBox.KEY_SIZE
-    privid = _keypath_to_id(keypath)
+    privid = _keypath_to_id(path)
     wallet_key = _nacl1_kdf(_NACL2_KEY_BYTES,
                           password,
                           salt)
@@ -80,12 +78,12 @@ def create_wallet(salt, key, password, keypath=""):
     encwallet = salt + box.encrypt(key)
     return _Wallet(encwallet, privid, key)
 
-def open_wallet(wdata, password, keypath=""):
+def open_wallet(wdata, password, path):
     # FIXME assert wdata length
-    print("Opening wallet", keypath,"with password", password)
+    print("Opening wallet", path,"with password", password)
     salt = wdata[:_NACL1_SALTBYTES]
     encwallet = wdata[_NACL1_SALTBYTES:]
-    privid = _keypath_to_id(keypath)
+    privid = _keypath_to_id(path)
     wallet_key = _nacl1_kdf(_NACL2_KEY_BYTES,
                             password,
                             salt)
