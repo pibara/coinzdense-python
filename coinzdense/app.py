@@ -22,6 +22,42 @@ def _keyspace_usage(hashlen, otsbits, keyspace):
         usage += (1 << keyspace[0]["reserve"]) * _keyspace_usage(hashlen, otsbits, keyspace[1:])
     return usage
 
+class KeySpace:
+    def __init__(self, hashlen, otsbits, keyspace, offset=0, size=1<<64, state=None):
+        self.hashlen = hashlen
+        self.otsbits = otsbits
+        self.keyspace = keyspace
+        if state is None:
+            self.state = {}
+            self.state["offset"] = offset
+            self.state["stack"] = size
+            reserve_bits = keyspace[0].get("reserve", None)
+            if reserve_bits is None:
+                self.state["heap_start"] = offset
+                self.state["heap"] = offset
+                self.state["has_reserved"] = False
+                self.state["reserved_heap_start"] = offset
+                self.state["reserved_heap"] = offset
+            else:
+                reserved = (1 << reserve_bits) * _keyspace_usage(hashlen, otsbits, keyspace[1:])
+                self.state["heap_start"] = offset + reserved
+                self.state["heap"] = offset + reserved
+                self.state["has_reserved"] = True
+                self.state["reserved_heap_start"] = offset
+                self.state["reserved_heap"] = offset
+            self.state["own_offset"] = self.state["heap"]
+            self.state["heap"] += (1 << sum(keyspace[0]["heights"])) + _sub_keyspace_usage(hashlen, otsbits, keyspace[0]["heights"])
+        else:
+            self.state = state
+    def own_offset(self):
+        return self.state["own_offset"]
+    def allocate_subspace(self):
+        keyspace_size = _keyspace_usage(hashlen, otsbits, keyspace[1:])
+        self.state["stack"] -= keyspace_size
+        return KeySpace(self.hashlen, self.otsbits, self.keyspace[1:], self.state["stack"], keyspace_size)
+    def get_state(self):
+        return self.state
+
 class BlockChainEnv:
     def __init__(self, conf):
         assert "appname" in conf, "Please run coinzdense-lint on your blockchain RC"
