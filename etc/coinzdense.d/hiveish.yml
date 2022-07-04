@@ -1,0 +1,85 @@
+---
+appname: HIVEISH
+hashlen: 32
+otsbits: 5
+heights:
+- 9
+- 9
+- 8
+subkeys:
+- typ: default
+  shared: 4096
+  heights:
+  - 6
+  - 6
+- name: ACTIVE
+  allocated: 38
+  heights:
+  - 9
+  - 9
+  - 8
+  subkeys:
+  - typ: default
+    allocate: 0
+    shared: 4096
+  - name: POSTING
+    allocate: 128
+    shared: 4096
+    subkeys:
+    - typ: default
+      allocate: 0
+      shared: 4096
+      heights:
+      - 6
+      - 6
+    - name: vote
+    - name: comment
+    - name: delete_comment
+    - name: comment_options
+    - name: claim_reward_balance
+    - name: custom_json
+      subkeys:
+      - typ: default
+        allocate: 0
+        shared: 64
+        heights:
+        - 6
+        - 6
+      - name: actifit
+      - name: sm
+        subkeys:
+        - typ: default
+          allocate: 0
+          shared: 64
+          heights:
+          - 5
+          - 5
+          - 4
+        - name: sm_find_match
+        - name: sm_start_match
+        - name: sm_cancel_match
+  - name: transfer
+  - name: transfer_to_vesting
+  - name: withdraw_vesting
+  - name: limit_order_create
+  - name: limit_order_cancel
+  - name: convert
+  - name: create_claimed_account
+  - name: claim_account
+  - name: account_update
+  - name: account_witness_vote
+  - name: account_witness_proxy
+  - name: custom
+  - name: request_account_recovery
+  - name: escrow_transfer
+  - name: escrow_dispute
+  - name: escrow_release
+  - name: escrow_approve
+  - name: transfer_to_savings
+  - name: transfer_from_savings
+  - name: cancel_transfer_from_savings
+  - name: delegate_vesting_shares
+- name: recover_account
+- name: change_recovery_account
+- name: decline_voting_rights
+- name: set_reset_account 
