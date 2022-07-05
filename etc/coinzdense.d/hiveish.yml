@@ -20,14 +20,14 @@ subkeys:
   - 8
   subkeys:
   - typ: default
-    allocate: 0
+    allocated: 0
     shared: 4096
   - name: POSTING
-    allocate: 128
+    allocated: 128
     shared: 4096
     subkeys:
     - typ: default
-      allocate: 0
+      allocated: 0
       shared: 4096
       heights:
       - 6
@@ -40,7 +40,7 @@ subkeys:
     - name: custom_json
       subkeys:
       - typ: default
-        allocate: 0
+        allocated: 0
         shared: 64
         heights:
         - 6
@@ -49,7 +49,7 @@ subkeys:
       - name: sm
         subkeys:
         - typ: default
-          allocate: 0
+          allocated: 0
           shared: 64
           heights:
           - 5
