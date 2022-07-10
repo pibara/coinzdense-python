@@ -256,6 +256,7 @@ class KsSubKey:
         self.sync = sync
         if self.sync is not None:
             self.sync(self.state)
+        self.sync.set_petname(self.state["node"][-1] + "-" + str(self.state["parent_sign_index"]), self.state["parent_sign_index"])
 
     def __getitem__(self, key):
         """Actively get a sub key and take full responsibility"""
