@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 """Experimental code for new YAML based application-RC app config"""
+import json
 from yaml import load
 try:
     from yaml import CLoader as Loader
@@ -201,24 +202,60 @@ class RcSubKey:
 class KsSubKey:
     """Key-space abstraction for top level and sub keys"""
     # pylint: disable=too-many-instance-attributes
-    def __init__(self, rckey, offset=0, kssize=1<<64,  old_state=None, sync=None, parent_sign_index=None):
+    def __init__(self,
+                 rckey,
+                 offset=0,
+                 kssize=1<<64,
+                 old_state=None,
+                 sync=None,
+                 blockchain_state=None,
+                 parent_sign_index=0):
         # pylint: disable=too-many-arguments
+        # The rckey could be the actual rckey or one of its ancestors
         self.rckey = rckey
-        self.keyspace_offset = offset
-        self.keyspace_end_offset = offset + kssize - 1
-        sizes = rckey.index_space()
-        self.heap_offset = offset + sizes[0]
+        # If its not the actual rckey, try to walk the parent
+        if old_state and old_state["node"] != rckey.node:
+            if len(rckey.node) < len(old_state.node):
+                # If the ancestor node array thoesn't match the start of the old_state node,
+                #   then it can't be a valid ancestor rcnode
+                if old_state.node[:len(rckey.node)] != rckey.node:
+                    raise RuntimeError("Resource key is not a possible ancestor (2)")
+                # Walk the RC-node tree till we get the proper node
+                for nextnode in old_state.node[len(rckey.node)]:
+                    self.rckey = self.rckey[nextnode]
+            else:
+                # The lengths exclude the posibility that this might be an rcnode ancestor
+                raise RuntimeError("Resource key is not a possible ancestor (1)")
+        # Get two main attributes from the rckey
         self.reserved_count = rckey.reserved_count()
         self.total_count = rckey.total_count()
+        # If there is no old state, create a state dict from scratch
         if old_state is None:
+            sizes = rckey.index_space()
             self.state = {}
+            self.state["keyspace_offset"] = offset
+            self.state["keyspace_end_offset"] = offset + kssize -1
+            self.state["heap_offset"] = offset + sizes[0]
             self.state["reserved_index"] = 0
             self.state["regular_index"] = self.reserved_count
-            self.state["heap_pointer"] = self.heap_offset
+            self.state["heap_pointer"] = self.state["heap_offset"]
+            self.state["parent_sign_index"] = parent_sign_index
+            self.state["node"] = rckey.node
         else:
+            # If there is old_state, use the old state
             self.state = old_state
+            # If there is blockchain state to consider (if multiple clients use the same key) use the highest values.
+            if blockchain_state is not None:
+                if blockchain_state["reserved_index"] > self.state["reserved_index"]:
+                    self.state["reserved_index"] = blockchain_state["reserved_index"]
+                if blockchain_state["regular_index"] > self.state["regular_index"]:
+                    blockchain_state["regular_index"] = self.state["regular_index"]
+                if blockchain_state["heap_pointer"] > self.state["heap_pointer"]:
+                    blockchain_state["heap_pointer"] = self.state["heap_pointer"]
+        # set the sync functor
         self.sync = sync
-        self.parent_sign_index = parent_sign_index
+        if self.sync is not None:
+            self.sync(self.state)
 
     def __getitem__(self, key):
         """Actively get a sub key and take full responsibility"""
@@ -233,17 +270,20 @@ class KsSubKey:
             raise RuntimeError("Exausted reserved key index")
         myoffset = self.state["heap_pointer"]
         mysize = sum(rckey.index_space())
-        if self.state["heap_pointer"] + mysize - 1 > self.keyspace_end_offset:
+        if self.state["heap_pointer"] + mysize - 1 > self.state["keyspace_end_offset"]:
             raise RuntimeError("Ran out of keyspace heap")
         self.state["heap_pointer"] += mysize
         if self.sync is not None:
             self.sync(self.state)
-        return KsSubKey(rckey, myoffset, mysize, parent_sign_index=myindex)
+        return KsSubKey(rckey, myoffset, mysize, parent_sign_index=myindex, sync=self.sync)
 
     def set_sync(self,sync):
         """Set the sync functor"""
         self.sync = sync
         self.sync(self.state)
+
+    def set_petname(self, petname):
+        self.sync.set_petname(petname, self.state["parent_sign_index"])
 
     def signing_index(self):
         """Actively get a signing index"""
@@ -255,21 +295,40 @@ class KsSubKey:
             return myindex
         raise RuntimeError("Exausted main key index")
 
-def psync(obj):
-    """dummy method for syncing"""
-    print(obj)
+class FileState:
+    def __init__(self, path):
+        self.path = path
+        try:
+            with open(self.path) as statefile:
+                self.state = dict(json.load(statefile))
+        except:
+            self.state = {}
+            self.state["keys"] = {}
+            self.state["petnames"] = {}
+            self.state["petnames"]["OWNER"] = 0
+    def __call__(self, obj):
+        self.state["keys"][str(obj["parent_sign_index"])] = obj
+        with open(self.path,"w") as statefile:
+            json.dump(self.state, statefile, indent=1)
+    def set_petname(self, index, petname):
+        self.state["petnames"][index] = petname
+        with open(self.path,"w") as statefile:
+            json.dump(self.state, statefile, indent=1)
+
+
 
 with open("etc/coinzdense.d/hiveish.yml", encoding="utf8") as apprc:
     data = load(apprc, Loader=Loader)
 
-owner_key = RcSubKey(data, minimum=20.0)
-owner_key_2 = KsSubKey(owner_key, sync=psync)
-active_key_2 = owner_key_2["ACTIVE"]
-active_key_2.set_sync(psync)
-percent = owner_key.check(minimum=50.0)
-active_key = owner_key["ACTIVE"]
-posting_key = active_key["POSTING"]
-vote_key = posting_key["vote"]
-custom_json_key = posting_key["custom_json"]
-splinterland_key = custom_json_key["sm"]
-find_match_key = splinterland_key["sm_find_match"]
+fs = FileState("state.json")
+owner_key = KsSubKey(RcSubKey(data, minimum=20.0), sync=fs)
+print(owner_key.signing_index())
+print(owner_key.signing_index())
+print(owner_key.signing_index())
+print(owner_key.signing_index())
+print(owner_key.signing_index())
+active1 = owner_key["ACTIVE"]
+active1.set_petname("ACTIVE")
+active2 = owner_key["ACTIVE"]
+active2.set_petname("SPARE_ACTIVE")
+
