@@ -1,6 +1,7 @@
 #!/usr/bin/python3
-"""Experimental code for new YAML based application-RC app config"""
+"""Experimental code for the Web3 Entropy management layer (Wen3) YAML based application-RC app config"""
 import json
+import os
 from yaml import load
 try:
     from yaml import CLoader as Loader
@@ -8,24 +9,35 @@ except ImportError:
     from yaml import Loader
 
 def _params_to_chunk_count(hashlen, otsbits):
+    """Calculate how many one-time signature chunks are needed for a whole one-time signature"""
     return (hashlen * 8 + otsbits -1) // otsbits
 
 def _params_to_per_signature_index_space(hashlen, otsbits):
-    # *2 : secret_up + secret_down
-    # +2 : + transaction salt + misc seed/salt
+    """Calculate how much WEN3 enropy key space is needed for a single signature"""
+    # Twice the number of one-time signature chunks plus a transaction salt plus misc entropy with diverse uses.
     return _params_to_chunk_count(hashlen, otsbits) *2 + 2
 
 
 def _params_to_index_space(hashlen, otsbits, heights):
+    """Calculate how much WEN3 entropy key space is needed for a whole multi-level signing key"""
+    # The WEN3 entropy key space needed for the currently lowest level of the multi-level signing key.
+    #  This is the max number of signatures times the amount of WEN3 entopy key space for a single signature.
     lowest_level_signing_space = (1 << sum(heights)) * _params_to_per_signature_index_space(hashlen, otsbits)
     if len(heights) > 1:
+        # If _params_to_index_space was invoked at a non-root level-key level, we calculate how many level-key
+        #  salts we need at the lowest level.
         lowest_level_level_key_salts = 1 << sum(heights[:-1])
+        # The return value is the WEN3 entropy kay-space for the lowest level level-keys plus the result of invoking
+        #  _params_to_index_space for all the higer level level-keys.
         return lowest_level_signing_space + \
                 lowest_level_level_key_salts + \
                 _params_to_index_space(hashlen, otsbits, heights[:-1])
+    # If _params_to_index_space was invoked on the root level layer key of the signing key, return one (level salt)
+    #  plus the amount needed for signatures at the root leval.
     return lowest_level_signing_space + 1
 
 def _check_heights(val):
+    """Assertion type chacks for application-RC heights data"""
     if not isinstance(val, list):
         raise ApplicationRcError("1 heights should be a list of integers: " + str(val))
     if len(val) < 2 or len(val) > 32:
@@ -37,6 +49,7 @@ def _check_heights(val):
             raise ApplicationRcError("height should be a value from the range 3..16")
 
 def _check_subkeys(val):
+    """Assertion type checks for application-RC subkeys data"""
     if not isinstance(val, list):
         raise ApplicationRcError("subkeys should be a list of objects")
     for subobj in val:
@@ -53,6 +66,8 @@ def _check_subkeys(val):
                         raise ApplicationRcError("A shared or allocated must be a non-negative integer")
 
 def _check_object(obj, parent):
+    # pylint: disable=too-many-branches
+    """Assertion type chacks for a authority attenuation level node"""
     for key,val in obj.items():
         if key in ["heights", "subkeys"]:
             if key == "heights":
@@ -80,8 +95,10 @@ class ApplicationRcError(ValueError):
     """Exception for Application RC value errors"""
 
 class RcSubKey:
+    # pylint: disable=too-many-instance-attributes
     """Application RC data abstraction for top and sub keys"""
     def __init__(self, obj, parent=None, default=None, minimum=0.0):
+        # pylint: disable=too-many-branches
         _check_object(obj, parent)
         if parent is None:
             if "appname" in obj:
@@ -114,6 +131,7 @@ class RcSubKey:
         else:
             self._init_sub(obj, parent, default)
     def _init_sub(self,obj, parent, default):
+        # pylint: disable=too-many-branches
         if default is None:
             raise ApplicationRcError("default should not be None if parent is defined")
         if "name" not in obj:
@@ -209,8 +227,10 @@ class KsSubKey:
                  old_state=None,
                  sync=None,
                  blockchain_state=None,
-                 parent_sign_index=0):
-        # pylint: disable=too-many-arguments
+                 parent_sign_index=-1,
+                 statedir=None,
+                 account=None):
+        # pylint: disable=too-many-arguments, too-many-branches
         # The rckey could be the actual rckey or one of its ancestors
         self.rckey = rckey
         # If its not the actual rckey, try to walk the parent
@@ -254,9 +274,15 @@ class KsSubKey:
                     blockchain_state["heap_pointer"] = self.state["heap_pointer"]
         # set the sync functor
         self.sync = sync
+        if self.sync is None and statedir is not None and account is not None:
+            self.sync = KsFileState(statedir, account, self.rckey)
         if self.sync is not None:
             self.sync(self.state)
-        self.sync.set_petname(self.state["node"][-1] + "-" + str(self.state["parent_sign_index"]), self.state["parent_sign_index"])
+        if len(self.state["node"]) == 1:
+            self.sync.set_petname(self.state["node"][0], self.state["parent_sign_index"])
+        else:
+            self.sync.set_petname(self.state["node"][-1] + "-" + str(self.state["parent_sign_index"]),
+                                  self.state["parent_sign_index"])
 
     def __getitem__(self, key):
         """Actively get a sub key and take full responsibility"""
@@ -284,6 +310,7 @@ class KsSubKey:
         self.sync(self.state)
 
     def set_petname(self, petname):
+        """Set a convenient petname for this key"""
         self.sync.set_petname(petname, self.state["parent_sign_index"])
 
     def signing_index(self):
@@ -296,40 +323,57 @@ class KsSubKey:
             return myindex
         raise RuntimeError("Exausted main key index")
 
-class FileState:
-    def __init__(self, path):
-        self.path = path
-        try:
-            with open(self.path) as statefile:
+class KsFileState:
+    """Persistent state for the Wen3 layer."""
+    def __init__(self, statedir, accountname, rckey):
+        if not os.path.exists(statedir):
+            os.mkdir(statedir)
+        chaindir = os.path.join(statedir, rckey.node[0])
+        if not os.path.exists(chaindir):
+            os.mkdir(chaindir)
+        wen3dir = os.path.join(chaindir,"wen3")
+        if not os.path.exists(wen3dir):
+            os.mkdir(wen3dir)
+        self.path = os.path.join(wen3dir, accountname + ".json")
+        if os.path.exists(self.path):
+            with open(self.path, encoding="utf8") as statefile:
                 self.state = dict(json.load(statefile))
-        except:
+        else:
             self.state = {}
             self.state["keys"] = {}
             self.state["petnames"] = {}
-            self.state["petnames"]["OWNER"] = 0
+            self.state["petnames"]["OWNER"] = -1
     def __call__(self, obj):
+        """Invoking will update the WEN3 state for one key and write all WEN3 state for the key hyrarchy to disk"""
         self.state["keys"][str(obj["parent_sign_index"])] = obj
-        with open(self.path,"w") as statefile:
+        with open(self.path,"w", encoding="utf8") as statefile:
             json.dump(self.state, statefile, indent=1)
-    def set_petname(self, index, petname):
-        self.state["petnames"][index] = petname
-        with open(self.path,"w") as statefile:
+    def set_petname(self, petname, index):
+        """Set a WEN3 petname for a specific key instance"""
+        to_delete = set()
+        for key,val in self.state["petnames"].items():
+            if val == index:
+                to_delete.add(key)
+        for key in to_delete:
+            _ = self.state["petnames"].pop(key)
+        self.state["petnames"][petname] = str(index)
+        with open(self.path,"w", encoding="utf8") as statefile:
             json.dump(self.state, statefile, indent=1)
 
 
 
+owndir = os.path.join(os.path.expanduser("~"), ".coinzdense")
+if not os.path.exists(owndir):
+    os.mkdir(owndir)
+vardir = os.path.join(owndir,"var")
 with open("etc/coinzdense.d/hiveish.yml", encoding="utf8") as apprc:
     data = load(apprc, Loader=Loader)
-
-fs = FileState("state.json")
-owner_key = KsSubKey(RcSubKey(data, minimum=20.0), sync=fs)
+owner_key = KsSubKey(RcSubKey(data, minimum=20.0), statedir=vardir, account="silentbot")
 print(owner_key.signing_index())
 print(owner_key.signing_index())
 print(owner_key.signing_index())
 print(owner_key.signing_index())
 print(owner_key.signing_index())
 active1 = owner_key["ACTIVE"]
-active1.set_petname("ACTIVE")
 active2 = owner_key["ACTIVE"]
 active2.set_petname("SPARE_ACTIVE")
-
