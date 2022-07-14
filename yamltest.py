@@ -2,6 +2,7 @@
 """Experimental code for the Web3 Entropy management layer (Wen3) YAML based application-RC app config"""
 import json
 import os
+import asyncio
 from yaml import load
 try:
     from yaml import CLoader as Loader
@@ -313,7 +314,7 @@ class KsSubKey:
         """Set a convenient petname for this key"""
         self.sync.set_petname(petname, self.state["parent_sign_index"])
 
-    def signing_index(self):
+    async def signing_index(self):
         """Actively get a signing index"""
         if self.state["regular_index"] < self.total_count:
             myindex = self.state["regular_index"]
@@ -335,6 +336,7 @@ class KsFileState:
         if not os.path.exists(wen3dir):
             os.mkdir(wen3dir)
         self.path = os.path.join(wen3dir, accountname + ".json")
+        print(self.path)
         if os.path.exists(self.path):
             with open(self.path, encoding="utf8") as statefile:
                 self.state = dict(json.load(statefile))
@@ -352,7 +354,7 @@ class KsFileState:
         """Set a WEN3 petname for a specific key instance"""
         to_delete = set()
         for key,val in self.state["petnames"].items():
-            if val == index:
+            if str(val) == str(index):
                 to_delete.add(key)
         for key in to_delete:
             _ = self.state["petnames"].pop(key)
@@ -360,20 +362,80 @@ class KsFileState:
         with open(self.path,"w", encoding="utf8") as statefile:
             json.dump(self.state, statefile, indent=1)
 
+class DummyWalletCacheFile:
+    """Dummy wallet-cache File"""
+    def __init__(self, statedir, chain, accountname, keyindex, seed):
+        self.seed = seed
+        if not os.path.exists(statedir):
+             os.mkdir(statedir)
+        chaindir = os.path.join(statedir, chain)
+        if not os.path.exists(chaindir):
+            os.mkdir(chaindir)
+        walletsdir = os.path.join(chaindir,"wallet")
+        if not os.path.exists(walletsdir):
+            os.mkdir(walletsdir)
+        walletdir =os.path.join(walletsdir,accountname)
+        if not os.path.exists(walletdir):
+            os.mkdir(walletdir)
+        if keyindex == -1:
+            self.path = os.path.join(walletdir,"main.json")
+        else:
+            self.path = os.path.join(walletdir,"sub-" + str(keyindex) + ".json")
+        print(self.path)
+        if os.path.exists(self.path):
+            with open(self.path, encoding="utf8") as statefile:
+                self.state = dict(json.load(statefile))
+        else:
+            self.state = {}
+            self.state["cache"] = {}
+            self.state["res"] = []
+            self.state["reg"] = []
+
+    def flush(self):
+        with open(self.path, "w", encoding="utf8") as statefile:
+            json.dump(self.state, statefile, indent=1)
+
+    def set_levelkey(self, level, keyid):
+        while len(self.state["reg"]) < level:
+            self.state["reg"].append(None)
+        self.state["reg"][level] = keyid
+        self.flush()
+
+    def set_reserved_levelkey(self, level, keyid):
+        while len(self.state["res"]) < level:
+            self.state["res"].append(None)
+        self.state["res"][level] = keyid
+        self.flush()
+
+    def anounce(self, keyid, spaceoffset):
+        self.state["cache"][keyid] = {"DUMMY": spaceoffset}
+        self.flush()
+
+    async def require(self, keyid):
+        pass
+
+    def release(self, keyid):
+        del(self.state["cache"][keyid])
+        self.flush()
 
 
-owndir = os.path.join(os.path.expanduser("~"), ".coinzdense")
-if not os.path.exists(owndir):
-    os.mkdir(owndir)
-vardir = os.path.join(owndir,"var")
-with open("etc/coinzdense.d/hiveish.yml", encoding="utf8") as apprc:
-    data = load(apprc, Loader=Loader)
-owner_key = KsSubKey(RcSubKey(data, minimum=20.0), statedir=vardir, account="silentbot")
-print(owner_key.signing_index())
-print(owner_key.signing_index())
-print(owner_key.signing_index())
-print(owner_key.signing_index())
-print(owner_key.signing_index())
-active1 = owner_key["ACTIVE"]
-active2 = owner_key["ACTIVE"]
-active2.set_petname("SPARE_ACTIVE")
+
+        
+async def main():
+    owndir = os.path.join(os.path.expanduser("~"), ".coinzdense")
+    if not os.path.exists(owndir):
+        os.mkdir(owndir)
+    vardir = os.path.join(owndir,"var")
+    with open("etc/coinzdense.d/hiveish.yml", encoding="utf8") as apprc:
+        data = load(apprc, Loader=Loader)
+    owner_key = KsSubKey(RcSubKey(data, minimum=20.0), statedir=vardir, account="silentbot")
+    print(await owner_key.signing_index())
+    print(await owner_key.signing_index())
+    print(await owner_key.signing_index())
+    print(await owner_key.signing_index())
+    print(await owner_key.signing_index())
+    active1 = owner_key["ACTIVE"]
+    active2 = owner_key["ACTIVE"]
+    active2.set_petname("SPARE_ACTIVE")
+
+asyncio.run(main())
