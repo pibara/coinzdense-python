@@ -230,10 +230,15 @@ class KsSubKey:
                  blockchain_state=None,
                  parent_sign_index=-1,
                  statedir=None,
-                 account=None):
+                 account=None,
+                 seed=None):
         # pylint: disable=too-many-arguments, too-many-branches
         # The rckey could be the actual rckey or one of its ancestors
         self.rckey = rckey
+        self.statedir = statedir
+        self.account = account
+        self.seed = seed
+        self.wcache = WalletCacheFile(statedir, rckey.node[0], account, parent_sign_index, seed)
         # If its not the actual rckey, try to walk the parent
         if old_state and old_state["node"] != rckey.node:
             if len(rckey.node) < len(old_state.node):
@@ -303,7 +308,7 @@ class KsSubKey:
         self.state["heap_pointer"] += mysize
         if self.sync is not None:
             self.sync(self.state)
-        return KsSubKey(rckey, myoffset, mysize, parent_sign_index=myindex, sync=self.sync)
+        return KsSubKey(rckey, myoffset, mysize, parent_sign_index=myindex, sync=self.sync, statedir=self.statedir, account=self.account, seed=self.seed)
 
     def set_sync(self,sync):
         """Set the sync functor"""
@@ -362,7 +367,7 @@ class KsFileState:
         with open(self.path,"w", encoding="utf8") as statefile:
             json.dump(self.state, statefile, indent=1)
 
-class DummyWalletCacheFile:
+class WalletCacheFile:
     """Dummy wallet-cache File"""
     def __init__(self, statedir, chain, accountname, keyindex, seed):
         self.seed = seed
@@ -378,9 +383,9 @@ class DummyWalletCacheFile:
         if not os.path.exists(walletdir):
             os.mkdir(walletdir)
         if keyindex == -1:
-            self.path = os.path.join(walletdir,"main.json")
+            self.path = os.path.join(walletdir,"cache-main.json")
         else:
-            self.path = os.path.join(walletdir,"sub-" + str(keyindex) + ".json")
+            self.path = os.path.join(walletdir,"cache-sub-" + str(keyindex) + ".json")
         print(self.path)
         if os.path.exists(self.path):
             with open(self.path, encoding="utf8") as statefile:
@@ -390,6 +395,7 @@ class DummyWalletCacheFile:
             self.state["cache"] = {}
             self.state["res"] = []
             self.state["reg"] = []
+            self.flush()
 
     def flush(self):
         with open(self.path, "w", encoding="utf8") as statefile:
@@ -428,7 +434,7 @@ async def main():
     vardir = os.path.join(owndir,"var")
     with open("etc/coinzdense.d/hiveish.yml", encoding="utf8") as apprc:
         data = load(apprc, Loader=Loader)
-    owner_key = KsSubKey(RcSubKey(data, minimum=20.0), statedir=vardir, account="silentbot")
+    owner_key = KsSubKey(RcSubKey(data, minimum=20.0), statedir=vardir, account="silentbot", seed="xxxxxxxx")
     print(await owner_key.signing_index())
     print(await owner_key.signing_index())
     print(await owner_key.signing_index())
