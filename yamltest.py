@@ -3,6 +3,7 @@
 import json
 import os
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 from yaml import load
 try:
     from yaml import CLoader as Loader
@@ -36,6 +37,27 @@ def _params_to_index_space(hashlen, otsbits, heights):
     # If _params_to_index_space was invoked on the root level layer key of the signing key, return one (level salt)
     #  plus the amount needed for signatures at the root leval.
     return lowest_level_signing_space + 1
+
+def _heights_index_to_indexlist(heights, index):
+    if len(heights) == 0:
+        return []
+    return [index // (1 << sum(heights[1:]))] + _heights_index_to_indexlist(heights[1:], index % (1 << sum(heights[1:])))
+
+def _heights_index_to_lkindex(heights, rindex, index, rdif, idif, nr):
+    rval = [[],[]]
+    if rindex == 0:
+        rval[0].append([])
+    else:
+        rval[0].append([0] + _heights_index_to_indexlist(heights, rindex-1)[:-1])
+    if index == nr:
+        rval[1].append([])
+    else:
+        rval[1].append([0] + _heights_index_to_indexlist(heights, index-1)[:-1])
+    rval[0].append([0] + _heights_index_to_indexlist(heights, rindex)[:-1])
+    rval[1].append([0] + _heights_index_to_indexlist(heights, index)[:-1])
+    rval[0].append([0] + _heights_index_to_indexlist(heights, rindex + rdif)[:-1])
+    rval[1].append([0] + _heights_index_to_indexlist(heights, index + idif)[:-1])
+    return rval
 
 def _check_heights(val):
     """Assertion type chacks for application-RC heights data"""
@@ -169,6 +191,7 @@ class RcSubKey:
                     self.default = subkey
                 else:
                     self.subkeys.append(subkey)
+
     def index_space(self):
         """Get the amount of index space that this level could allocate"""
         ownkey_space = _params_to_index_space(self.hashlen, self.otsbits, self.heights)
@@ -289,6 +312,30 @@ class KsSubKey:
         else:
             self.sync.set_petname(self.state["node"][-1] + "-" + str(self.state["parent_sign_index"]),
                                   self.state["parent_sign_index"])
+        if old_state is None:
+            self.initialize_reserved_and_regular()
+            # self.wcache.anounce(parent_sign_index, offset, rckey.hashlen, rckey.otsbits, rckey.heights[0])
+            # FIXME: add all levels both for regular and reserved.
+        self.init_await_set = set()
+
+    def initialize_reserved_and_regular(self):
+        pass
+
+    def increment_reserved(self):
+        self.state["reserved_index"] += 1
+
+    def increment_regular(self):
+        self.state["regular_index"] += 1
+
+    async def await_reserved_and_regular(self):
+        pass
+
+    async def init(self):
+        pass
+        # FIXME: add all levels, both for regular and reserved.
+        #await self.wcache.require(self.state["parent_sign_index"])
+        #self.wcache.set_levelkey(0, self.state["parent_sign_index"])
+        # FIXME: anounce a few extra
 
     def __getitem__(self, key):
         """Actively get a sub key and take full responsibility"""
@@ -296,9 +343,11 @@ class KsSubKey:
         if self.state["regular_index"] < self.total_count:
             myindex = self.state["regular_index"]
             self.state["regular_index"] += 1
+            # FIXME: Announce if nececary
         elif self.state["reserved_index"] < self.reserved_count:
             myindex = self.state["reserved_index"]
             self.state["reserved_index"] += 1
+            # FIXME: anounce if needed
         else:
             raise RuntimeError("Exausted reserved key index")
         myoffset = self.state["heap_pointer"]
@@ -324,6 +373,7 @@ class KsSubKey:
         if self.state["regular_index"] < self.total_count:
             myindex = self.state["regular_index"]
             self.state["regular_index"] += 1
+            # FIXME: anounce if needed
             if self.sync is not None:
                 self.sync(self.state)
             return myindex
@@ -341,7 +391,6 @@ class KsFileState:
         if not os.path.exists(wen3dir):
             os.mkdir(wen3dir)
         self.path = os.path.join(wen3dir, accountname + ".json")
-        print(self.path)
         if os.path.exists(self.path):
             with open(self.path, encoding="utf8") as statefile:
                 self.state = dict(json.load(statefile))
@@ -386,7 +435,6 @@ class WalletCacheFile:
             self.path = os.path.join(walletdir,"cache-main.json")
         else:
             self.path = os.path.join(walletdir,"cache-sub-" + str(keyindex) + ".json")
-        print(self.path)
         if os.path.exists(self.path):
             with open(self.path, encoding="utf8") as statefile:
                 self.state = dict(json.load(statefile))
@@ -396,35 +444,41 @@ class WalletCacheFile:
             self.state["res"] = []
             self.state["reg"] = []
             self.flush()
+        self.pending = {}
+        self.executor = ProcessPoolExecutor(max_workers=4)
 
     def flush(self):
         with open(self.path, "w", encoding="utf8") as statefile:
             json.dump(self.state, statefile, indent=1)
 
     def set_levelkey(self, level, keyid):
-        while len(self.state["reg"]) < level:
+        while len(self.state["reg"]) < level + 1:
             self.state["reg"].append(None)
-        self.state["reg"][level] = keyid
+        self.state["reg"][level] = str(keyid)
         self.flush()
 
     def set_reserved_levelkey(self, level, keyid):
-        while len(self.state["res"]) < level:
+        while len(self.state["res"]) < level + 1:
             self.state["res"].append(None)
-        self.state["res"][level] = keyid
+        self.state["res"][level] = str(keyid)
         self.flush()
 
-    def anounce(self, keyid, spaceoffset):
-        self.state["cache"][keyid] = {"DUMMY": spaceoffset}
-        self.flush()
+    def anounce(self, keyid, spaceoffset, hashlen, otsbits, height):
+        self.pending[str(keyid)] = asyncio.get_event_loop().run_in_executor(self.executor, make_levelkey, spaceoffset, hashlen, otsbits, height, self.seed)
 
     async def require(self, keyid):
-        pass
-
-    def release(self, keyid):
-        del(self.state["cache"][keyid])
+        print(self.state["cache"])
+        self.state["cache"][str(keyid)] = await self.pending[str(keyid)]
+        del(self.pending[str(keyid)])
         self.flush()
 
+    def release(self, keyid):
+        del(self.state["cache"][str(keyid)])
+        self.flush()
 
+def make_levelkey(spaceoffset, hashlen, otsbits, height, seed):
+    # FIXME: Bind to the level-key layer.
+    return {"offset": spaceoffset, "hashlen": hashlen, "otsbits": otsbits, "height": height, "seed": seed}
 
         
 async def main():
@@ -435,13 +489,20 @@ async def main():
     with open("etc/coinzdense.d/hiveish.yml", encoding="utf8") as apprc:
         data = load(apprc, Loader=Loader)
     owner_key = KsSubKey(RcSubKey(data, minimum=20.0), statedir=vardir, account="silentbot", seed="xxxxxxxx")
+    await owner_key.init()
     print(await owner_key.signing_index())
     print(await owner_key.signing_index())
     print(await owner_key.signing_index())
     print(await owner_key.signing_index())
     print(await owner_key.signing_index())
     active1 = owner_key["ACTIVE"]
+    await active1.init()
     active2 = owner_key["ACTIVE"]
+    await active2.init()
     active2.set_petname("SPARE_ACTIVE")
 
+
+num = 34567
+heights = [4,4,4,4]
+print(_heights_index_to_lkindex(heights, 0, num, 32, 512, 32))
 asyncio.run(main())
