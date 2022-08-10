@@ -19,7 +19,6 @@ def _params_to_per_signature_index_space(hashlen, otsbits):
     # Twice the number of one-time signature chunks plus a transaction salt plus misc entropy with diverse uses.
     return _params_to_chunk_count(hashlen, otsbits) *2 + 2
 
-
 def _params_to_index_space(hashlen, otsbits, heights):
     """Calculate how much WEN3 entropy key space is needed for a whole multi-level signing key"""
     # The WEN3 entropy key space needed for the currently lowest level of the multi-level signing key.
@@ -37,6 +36,65 @@ def _params_to_index_space(hashlen, otsbits, heights):
     # If _params_to_index_space was invoked on the root level layer key of the signing key, return one (level salt)
     #  plus the amount needed for signatures at the root leval.
     return lowest_level_signing_space + 1
+
+def _params_to_level_offset_and_size(offset, hashlen, otsbits, heights):
+    if len(heights) > 1:
+        offset2, rval = _params_to_level_offset_and_size(offset, hashlen, otsbits, heights[:-1])
+    else:
+        offset2 = offset
+        rval = []
+    lowest_level_signing_space = (1 << sum(heights)) * _params_to_per_signature_index_space(hashlen, otsbits)
+    if len(heights) > 1:
+        lowest_level_level_key_salts = 1 << sum(heights[:-1])
+    else:
+        lowest_level_level_key_salts = 1
+    lowest_level_onekey_signing_space = (1 << heights[-1]) * _params_to_per_signature_index_space(hashlen, otsbits) + 1
+    next_level_offset = offset2 + lowest_level_signing_space + lowest_level_level_key_salts
+    rval.append([offset2, lowest_level_onekey_signing_space])
+    return next_level_offset, rval
+
+def _main_index_to_levelkey_indices(index, heights, top=True):
+    if len(heights) == 1:
+        if index >= 1 << heights[0]:
+            raise RuntimeError("index out of range: " + str(index) + " > " + str(1 << sum(heights)))
+        return []
+    firstval = index // (1 << sum(heights[1:]))
+    rest = _main_index_to_levelkey_indices(index, [heights[0] + heights[1]] + heights[2:], False)
+    rval = [firstval] + rest
+    if top:
+        return [0] + rval
+    return rval
+
+def _heights_to_prealocate_constant(heights):
+    if len(heights) == 2:
+        return 1 << heights[0]
+    return _heights_to_prealocate_constant(heights[:-1]) + (1 << heights[-2])
+
+def _heights_to_prealocate_forward(heights, eagerness=1.0):
+    return int(_heights_to_prealocate_constant(heights)*eagerness)
+
+def _main_index_to_levelkey_indices_full(index, heights, eagerness=1.0):
+    rval_done = []
+    rval1 = _main_index_to_levelkey_indices(index, heights)
+    if index > 0:
+        rval0 = _main_index_to_levelkey_indices(index-1, heights)
+        for fromval, toval in zip(rval0, rval1):
+            subrval = []
+            for val in range(fromval, toval):
+                subrval.append(val)
+            rval_done.append(subrval)
+    extra = _heights_to_prealocate_forward(heights, eagerness)
+    maxindex = index+extra
+    if maxindex >= (1 << sum(heights)):
+        maxindex = (1 << sum(heights)) -1
+    rval2 = _main_index_to_levelkey_indices(maxindex, heights)
+    rval = []
+    for fromval, toval in zip(rval1, rval2):
+        subrval = []
+        for val in range(fromval, toval+1):
+            subrval.append(val)
+        rval.append(subrval)
+    return list(zip(rval, rval_done)), False
 
 def _heights_index_to_indexlist(heights, index):
     if len(heights) == 0:
@@ -467,7 +525,6 @@ class WalletCacheFile:
         self.pending[str(keyid)] = asyncio.get_event_loop().run_in_executor(self.executor, make_levelkey, spaceoffset, hashlen, otsbits, height, self.seed)
 
     async def require(self, keyid):
-        print(self.state["cache"])
         self.state["cache"][str(keyid)] = await self.pending[str(keyid)]
         del(self.pending[str(keyid)])
         self.flush()
@@ -501,8 +558,22 @@ async def main():
     await active2.init()
     active2.set_petname("SPARE_ACTIVE")
 
+offset = 80000
+hashlen = 16
+otsbits = 10
 
 num = 34567
-heights = [4,4,4,4]
-print(_heights_index_to_lkindex(heights, 0, num, 32, 512, 32))
-asyncio.run(main())
+heights = [7,5,6,4]
+# print(_heights_index_to_lkindex(heights, 0, num, 32, 512, 32))
+#_, os_params = _params_to_level_offset_and_size(offset, hashlen, otsbits, heights)
+#print(os_params)
+#res = _main_index_to_levelkey_indices(1234567, heights)
+#print(res)
+#prealoc_extra = _heights_to_prealocate_forward(heights, 1.0)
+#print(prealoc_extra)
+#res = _main_index_to_levelkey_indices(1234567+prealoc_extra, heights)
+#print(res)
+prealoc_all, release_all = _main_index_to_levelkey_indices_full(1234567, heights, 1.0)
+print(prealoc_all)
+print(release_all)
+#asyncio.run(main())
