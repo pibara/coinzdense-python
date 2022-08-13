@@ -73,7 +73,7 @@ def _heights_to_prealocate_constant(heights):
 def _heights_to_prealocate_forward(heights, eagerness=1.0):
     return int(_heights_to_prealocate_constant(heights)*eagerness)
 
-def _main_index_to_levelkey_indices_full(index, heights, eagerness=1.0):
+def _main_index_to_levelkey_indices_full(index, heights, lk_params, eagerness=1.0):
     rval_done = []
     rval1 = _main_index_to_levelkey_indices(index, heights)
     if index > 0:
@@ -94,7 +94,21 @@ def _main_index_to_levelkey_indices_full(index, heights, eagerness=1.0):
         for val in range(fromval, toval+1):
             subrval.append(val)
         rval.append(subrval)
-    return list(zip(rval, rval_done)), False
+    
+    zipped = list(zip(rval, rval_done, lk_params))
+    result = []
+    for level_data in zipped:
+        active = level_data[0]
+        inactive = level_data[1]
+        level_offset = level_data[2][0]
+        level_item_size = level_data[2][0]
+        subresult = [[],[]]
+        for ent in active:
+            subresult[0].append(level_offset + ent * level_item_size)
+        for ent in inactive:
+            subresult[1].append(level_offset + ent * level_item_size)
+        result.append(subresult)
+    return result, False
 
 def _heights_index_to_indexlist(heights, index):
     if len(heights) == 0:
@@ -564,16 +578,9 @@ otsbits = 10
 
 num = 34567
 heights = [7,5,6,4]
-# print(_heights_index_to_lkindex(heights, 0, num, 32, 512, 32))
-#_, os_params = _params_to_level_offset_and_size(offset, hashlen, otsbits, heights)
-#print(os_params)
-#res = _main_index_to_levelkey_indices(1234567, heights)
-#print(res)
-#prealoc_extra = _heights_to_prealocate_forward(heights, 1.0)
-#print(prealoc_extra)
-#res = _main_index_to_levelkey_indices(1234567+prealoc_extra, heights)
-#print(res)
-prealoc_all, release_all = _main_index_to_levelkey_indices_full(1234567, heights, 1.0)
+#print(_heights_index_to_lkindex(heights, 0, num, 32, 512, 32))
+_, params = _params_to_level_offset_and_size(offset, hashlen, otsbits, heights)
+prealoc_all, release_all = _main_index_to_levelkey_indices_full(1234567, heights, params, 1.0)
 print(prealoc_all)
 print(release_all)
 #asyncio.run(main())
