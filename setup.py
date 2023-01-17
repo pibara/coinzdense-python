@@ -6,7 +6,7 @@ here = path.abspath(path.dirname(__file__))
 
 setup(
     name='coinzdense',
-    version='0.0.4',
+    version='0.1.1',
     description='Simple Post-Quantum Signature library',
     long_description="""Library for hash-based signatures.
     
@@ -43,6 +43,12 @@ See https://coin.z-den.se/ for more info.
         'Environment :: Other Environment'
     ],
     keywords='signing postquantum blake2 merkletree ots',
-    install_requires=["libnacl>1.8.0=","pynacl>=1.4.0"],
+    install_requires=[
+        "libnacl>1.8.0=",
+        "pynacl>=1.4.0",
+        "sympy",
+        "base58",
+        "starkbank-ecdsa"
+        ],
     packages=find_packages(),
 )

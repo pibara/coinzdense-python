@@ -1,4 +1,5 @@
 """One-time signing (OTS) keys and signature validation"""
+import asyncio
 from libnacl import crypto_kdf_derive_from_key as _nacl2_key_derive
 from nacl.hash import blake2b as _nacl1_hash_function
 from nacl.encoding import RawEncoder as _Nacl1RawEncoder
@@ -8,15 +9,38 @@ def _ots_pairs_per_signature(hashlen, otsbits):
     sign a single digest"""
     return ((hashlen*8-1) // otsbits)+1
 
+def _calculate_pubkey(privkey, otsbits, hashlen, salt):
+    pubparts = []
+    # Calculate the full-sized one-time-signing pubkey
+    for privpart in privkey:
+        res = privpart
+        # Calculate one chunk of the full-sized one-time-signing pubkey
+        for _ in range(0, 1 << otsbits):
+            res = _nacl1_hash_function(res,
+                                       digest_size=hashlen,
+                                       key=salt,
+                                       encoder=_Nacl1RawEncoder)
+        pubparts.append(res)
+    # Calculate the normal-sized one-time-signing pubkey
+    pubkey_long = b"".join(pubparts)
+    return _nacl1_hash_function(
+            pubkey_long,
+            digest_size=hashlen,
+            key=salt,
+            encoder=_Nacl1RawEncoder)
+
 class OneTimeSigningKey:
     """Signing key for making a single one-time signature with"""
-    # pylint: disable=too-many-arguments
-    def __init__(self, hashlen, otsbits, levelsalt, key, startno, pubkey=None):
+    # pylint: disable=too-many-arguments, too-many-instance-attributes
+    def __init__(self, hashlen, otsbits, levelsalt, key, startno, pubkey=None, loop=None):
         """Constructor"""
         self._hashlen = hashlen
         self._otsbits = otsbits
         self._levelsalt = levelsalt
         self._pubkey = pubkey
+        self._loop = loop
+        if loop is None:
+            self._loop = asyncio.get_event_loop()
         self._privkey = []
         self._chopcount = _ots_pairs_per_signature(hashlen, otsbits)
         # We use up one chunk of entropy for a nonce. This nonce is basically the
@@ -34,6 +58,7 @@ class OneTimeSigningKey:
                                       "Signatur",
                                       key)
                     )
+        self._pending = None
 
     def get_pubkey(self):
         """Get the binary public key, calculate if needed.
@@ -43,26 +68,49 @@ class OneTimeSigningKey:
         bytes
             The public key.
         """
+        if self._pending is not None and self._pubkey is None:
+            raise RuntimeError("Can't synchonously call get_pubkey on anounced and not required OTSK")
         if self._pubkey is None:
-            pubparts = []
-            # Calculate the full-sized one-time-signing pubkey
-            for privpart in self._privkey:
-                res = privpart
-                # Calculate one chunk of the full-sized one-time-signing pubkey
-                for _ in range(0, 1 << self._otsbits):
-                    res = _nacl1_hash_function(res,
-                                               digest_size=self._hashlen,
-                                               key=self._levelsalt,
-                                               encoder=_Nacl1RawEncoder)
-                pubparts.append(res)
-            # Calculate the normal-sized one-time-signing pubkey
-            pubkey_long = b"".join(pubparts)
-            self._pubkey = _nacl1_hash_function(
-                    pubkey_long,
-                    digest_size=self._hashlen,
-                    key=self._levelsalt,
-                    encoder=_Nacl1RawEncoder)
+            self._pubkey = _calculate_pubkey(self._privkey, self._otsbits, self._hashlen, self._levelsalt)
         return self._pubkey
+
+    def announce(self, executor):
+        """Announce that we are expecting to use this key, schedule for pubkey calculation
+
+        Parameters
+        ----------
+        executor: concurrent.futures.Executor
+            execuror to use for calculating the pubkey.
+        """
+        if self._pubkey is None and self._pending is None:
+            self._pending = self._loop.run_in_executor(executor,
+                                                       _calculate_pubkey,
+                                                       self._privkey,
+                                                       self._otsbits,
+                                                       self._hashlen,
+                                                       self._levelsalt)
+
+    async def require(self):
+        """Await any pending executor code for calculating the pubkey"""
+        if self._pubkey is None and self._pending is not None:
+            self._pubkey = await self._pending
+
+    async def available(self):
+        """Check if pubkey is available
+
+        Returns
+        -------
+        bool
+            True if pubkey available
+        """
+        if self._pubkey is not None:
+            return True
+        if self._pending is None:
+            return False
+        if self._pending.done():
+            self._pubkey = await self._pending
+            return True
+        return False
 
     def sign_hash(self, digest):
         """Signature from hash
