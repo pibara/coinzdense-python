@@ -24,7 +24,6 @@ async def main():
                 executor = ThreadPoolExecutor(max_workers=workers)
             else:
                 executor = ProcessPoolExecutor(max_workers=workers)
-            key = key_from_creds("coinzdense", "demodemo","secretpassword12345")
             otsk = []
             start = time.time()
             for index in range(0,1024):
