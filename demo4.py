@@ -11,14 +11,14 @@ async def main():
     levelkey = LevelKey(seedkey=key, wen3index=0, hashlen=20, otsbits=7, height=10)
     levelkey.announce(executor)
     await levelkey.require()
-    print(levelkey.get_pubkey().hex())
-    print()
     sig1 = levelkey.sign_data(b"hohohohoho", 644)
     sig2 = levelkey.sign_data(b"hohohohoho", 645)
     validate = LevelValidation(hashlen=20, otsbits=7, height=10)
-    signature = validate.signature(level_signature=sig1)
-    ok = signature.validate_data(b"hohohohoho")
-    print(ok)
+    for sig in [sig1, sig2]:
+        signature = validate.signature(level_signature=sig)
+        ok = signature.validate_data(b"hohohohoho")
+        print(ok)
+
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()

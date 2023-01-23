@@ -208,7 +208,7 @@ class OneTimeValidator:
         self._pubkey = otpubkey
         self._chopcount = _ots_pairs_per_signature(hashlen, otsbits)
 
-    def validate_hash(self, digest, signature):
+    def validate_hash(self, digest, signature, merkle_mode=False):
         """Validate signature from signature
 
         Parameters
@@ -284,9 +284,11 @@ class OneTimeValidator:
                                     key=self._levelsalt,
                                     encoder=_Nacl1RawEncoder)
         # Check if the reconstructed pubkey matches the known pubkey
+        if merkle_mode:
+            return reconstructed_pubkey
         return self._pubkey == reconstructed_pubkey
 
-    def validate_data(self, data, signature):
+    def validate_data(self, data, signature, merkle_mode=False):
         """Validate signature from data
 
         Parameters
@@ -310,4 +312,4 @@ class OneTimeValidator:
                         key=nonce,
                         encoder=_Nacl1RawEncoder)
         # Validate the resulting digest is indeed signed with the known OTS key.
-        return self.validate_hash(digest, signature[self._hashlen:])
+        return self.validate_hash(digest, signature[self._hashlen:], merkle_mode)
