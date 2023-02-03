@@ -1,6 +1,9 @@
 """One-time signing (OTS) keys and signature validation"""
 import asyncio
+from concurrent.futures import Executor
+from asyncio.events import AbstractEventLoop
 from libnacl import crypto_kdf_derive_from_key as _nacl2_key_derive
+from libnacl import crypto_kdf_KEYBYTES as _nacl2_kdf_KEYBYTES
 from nacl.hash import blake2b as _nacl1_hash_function
 from nacl.encoding import RawEncoder as _Nacl1RawEncoder
 
@@ -33,7 +36,38 @@ class OneTimeSigningKey:
     """Signing key for making a single one-time signature with"""
     # pylint: disable=too-many-arguments, too-many-instance-attributes
     def __init__(self, hashlen, otsbits, levelsalt, key, startno, pubkey=None, loop=None):
+        # pylint: disable=too-many-branches
         """Constructor"""
+        if not isinstance(hashlen, int):
+            raise TypeError("hashlen must be an integer")
+        if not isinstance(otsbits, int):
+            raise TypeError("otsbits must be an integer")
+        if not isinstance(levelsalt, bytes):
+            raise TypeError("levelsalt must be an bytes")
+        if not isinstance(key, bytes):
+            raise TypeError("key must be an bytes")
+        if not isinstance(startno, int):
+            raise TypeError("startno must be an integer")
+        if pubkey is not None and not isinstance(pubkey, bytes):
+            raise TypeError("pubkey must be an bytes or None")
+        if loop is not None and not isinstance(loop, AbstractEventLoop):
+            raise TypeError("loop must be concurrent.futures.Executor or None")
+        if (hashlen < 16 or hashlen > 64):
+            raise ValueError("hashlen should have a value in the 16..64 range")
+        if otsbits < 4 or otsbits > 16:
+            raise ValueError("hashlen should have a value in the 4..16 range")
+        if len(levelsalt) != hashlen:
+            raise ValueError("levelsalt should be hashlen long")
+        if len(key) != _nacl2_kdf_KEYBYTES:
+            raise ValueError("key has the wrong size for a key")
+        if startno < 0:
+            raise ValueError("startno should be non-negative")
+        if startno.bit_length() > 64:
+            raise ValueError("startno too big to fit in 64 bit unsigned")
+        if (startno + 2 * _ots_pairs_per_signature(hashlen, otsbits)).bit_length() > 64:
+            raise ValueError("startno would overflow beyond 64 bit unsigned")
+        if isinstance(pubkey, bytes) and len(pubkey) != hashlen:
+            raise ValueError("pubkey (if non-Null) should be hashlen long")
         self._hashlen = hashlen
         self._otsbits = otsbits
         self._levelsalt = levelsalt
@@ -82,6 +116,8 @@ class OneTimeSigningKey:
         executor: concurrent.futures.Executor
             execuror to use for calculating the pubkey.
         """
+        if not isinstance(executor, Executor):
+            raise TypeError("Invalid executor type")
         if self._pubkey is None and self._pending is None:
             self._pending = self._loop.run_in_executor(executor,
                                                        _calculate_pubkey,
@@ -130,8 +166,10 @@ class OneTimeSigningKey:
         RuntimeError
             Thrown if digest has the wrong length
         """
+        if not isinstance(digest, bytes):
+            raise TypeError("digest should be bytes")
         if len(digest) != self._hashlen:
-            raise RuntimeError("sign_hash called with hash of inapropriate size")
+            raise ValueError("sign_hash called with hash of inapropriate size")
         # Convert the input digest into an array of otsbits long numbers
         as_bigno = int.from_bytes(digest,
                                   byteorder='big',
@@ -188,6 +226,8 @@ class OneTimeSigningKey:
         bytes
             The signature including nonce.
         """
+        if not isinstance(data, bytes):
+            raise TypeError("data should be bytes")
         # Hash the data, using the nonce salt as a key.
         digest = _nacl1_hash_function(
                         data,
@@ -202,6 +242,19 @@ class OneTimeValidator:
     """Validator for one-time signature"""
     def __init__(self, hashlen, otsbits, levelsalt, otpubkey):
         """Constructor"""
+        if (not isinstance(hashlen, int) or
+                not isinstance(otsbits, int) or
+                not isinstance(levelsalt, bytes) or
+                not isinstance(otpubkey, bytes)):
+            raise TypeError("OneTimeValidator constructor argument type mismatch")
+        if hashlen < 16 or hashlen > 64:
+            raise ValueError("hashlen should have a value in the 16..64 range")
+        if otsbits < 4 or otsbits > 16:
+            raise ValueError("hashlen should have a value in the 4..16 range")
+        if len(levelsalt) != hashlen:
+            raise ValueError("levelsalt should be hashlen long")
+        if len(otpubkey) != hashlen:
+            raise ValueError("otpubkey should be hashlen long")
         self._hashlen = hashlen
         self._otsbits = otsbits
         self._levelsalt = levelsalt
@@ -228,12 +281,18 @@ class OneTimeValidator:
         RuntimeError
             Thrown if digest or the signature has the wrong length
         """
+        if not isinstance(digest, bytes):
+            raise TypeError("digest should be bytes")
+        if not isinstance(signature, bytes):
+            raise TypeError("signature should be bytes")
+        if not  isinstance(merkle_mode, bool):
+            raise TypeError("merkle_mode should be a bool")
         if len(digest) != self._hashlen:
-            raise RuntimeError("sign_hash called with hash of inapropriate size")
+            raise ValueError("sign_hash called with hash of inapropriate size")
         if len(signature) != self._hashlen * 2 * _ots_pairs_per_signature(
                 self._hashlen,
                 self._otsbits):
-            raise RuntimeError("sign_hash called with signature of inapropriate size")
+            raise ValueError("sign_hash called with signature of inapropriate size")
         # Chop up the signature into hashlen long chunks
         partials = [signature[i:i+self._hashlen] for i in range(0, len(signature), self._hashlen)]
         # Convert the input digest into an array of otsbits long numbers
@@ -303,6 +362,14 @@ class OneTimeValidator:
         bool
             Boolean indicating if signature matches the pubkey/data combo
         """
+        if not isinstance(data, bytes):
+            raise TypeError("data should be bytes")
+        if not isinstance(signature, bytes):
+            raise TypeError("signature should be bytes")
+        if not  isinstance(merkle_mode, bool):
+            raise TypeError("merkle_mode should be a bool")
+        if len(signature) != (1 +  2 * self._chopcount) * self._hashlen:
+            raise ValueError("Signature has wrong length")
         # Extract the nonce from the signature
         nonce = signature[:self._hashlen]
         # Hash the data using the nonce
