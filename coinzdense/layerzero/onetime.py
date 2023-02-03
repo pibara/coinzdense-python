@@ -163,7 +163,9 @@ class OneTimeSigningKey:
 
         Raises
         ------
-        RuntimeError
+        TypeError
+            Thrown if digest has the wrong type
+        ValueError
             Thrown if digest has the wrong length
         """
         if not isinstance(digest, bytes):
@@ -278,7 +280,9 @@ class OneTimeValidator:
 
         Raises
         ------
-        RuntimeError
+        TypeError
+            Thrown if digest, merkle_mode, or the signature has the wrong type
+        ValueError
             Thrown if digest or the signature has the wrong length
         """
         if not isinstance(digest, bytes):

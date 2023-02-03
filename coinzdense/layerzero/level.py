@@ -1,6 +1,9 @@
 """Level-key signing keys and signature validation"""
 import asyncio
+from concurrent.futures import Executor
+from asyncio.events import AbstractEventLoop
 from libnacl import crypto_kdf_derive_from_key as _nacl2_key_derive
+from libnacl import crypto_kdf_KEYBYTES as _nacl2_kdf_KEYBYTES
 from nacl.hash import blake2b as _nacl1_hash_function
 from nacl.encoding import RawEncoder as _Nacl1RawEncoder
 from .onetime import OneTimeSigningKey, OneTimeValidator
@@ -73,6 +76,41 @@ class LevelKey:
     # pylint: disable=too-many-arguments
     def __init__(self, seedkey, wen3index, hashlen, otsbits, height,
                  bigpubkey=None, loop=None):
+        # pylint: disable=too-many-branches, too-many-statements
+        if not isinstance(seedkey, bytes):
+            raise TypeError("seedkey must be an bytes")
+        if not isinstance(wen3index, int):
+            raise TypeError("wen3index must be an integer")
+        if not isinstance(hashlen, int):
+            raise TypeError("hashlen must be an integer")
+        if not isinstance(otsbits, int):
+            raise TypeError("otsbits must be an integer")
+        if not isinstance(height, int):
+            raise TypeError("height must be an integer")
+        if bigpubkey is not None and not isinstance(bigpubkey, list):
+            raise TypeError("bigpubkey must be a list if not None")
+        if loop is not None and not isinstance(loop, AbstractEventLoop):
+            raise TypeError("loop must be an AbstractEventLoop")
+        if len(seedkey) != _nacl2_kdf_KEYBYTES:
+            raise ValueError("seedkey has wrong size for a key")
+        if wen3index < 0:
+            raise ValueError("wen3index must be non-negative")
+        if wen3index.bit_length() > 64:
+            raise ValueError("wen3index too big to fit in 64 bit unsigned")
+        if (wen3index + (_ots_pairs_per_signature(hashlen, otsbits) + 2) *
+                (1 << height)).bit_length() > 64:
+            raise ValueError("startno would overflow beyond 64 bit unsigned")
+        if (hashlen < 16 or hashlen > 64):
+            raise ValueError("hashlen should have a value in the 16..64 range")
+        if otsbits < 4 or otsbits > 16:
+            raise ValueError("hashlen should have a value in the 4..16 range")
+        if height <3 or height > 16:
+            raise ValueError("height should have a value in the 3..16 range")
+        if isinstance(bigpubkey, list):
+            if len(bigpubkey) != 1 << height:
+                raise ValueError("bigpubkey has wrong number of entries")
+            if not all(isinstance(x, bytes) and len(x) == hashlen for x in bigpubkey):
+                raise ValueError("bigpubkey must be an array of hashlen long bytes strings")
         self._hashlen = hashlen
         self._height = height
         if loop is None:
@@ -130,6 +168,8 @@ class LevelKey:
 
     def announce(self, executor):
         """Schedule background calculation of the pubkey"""
+        if not isinstance(executor, Executor):
+            raise TypeError("Invalid executor type")
         if self.pubkey is None:
             for otskey in self._keys:
                 otskey.announce(executor)
@@ -154,16 +194,40 @@ class LevelKey:
 
     def sign_hash(self, digest, index):
         """Sign a hash"""
+        if not isinstance(digest, bytes):
+            raise TypeError("digest must be bytes")
+        if not isinstance(index, int):
+            raise TypeError("index must be int")
+        if len(digest) != self._hashlen:
+            raise ValueError("digest should be hashlen long")
+        if index < 0:
+            raise IndexError("Negative indices are invalid")
+        if index >= (1 << self._height):
+            raise IndexError("index out of range for levelkey with this height")
         bin_index = index.to_bytes(2,'big')
         merkle_prefix = _get_merkle_prefix(self._merkletree, self._height, index)
         return bin_index + self._levelsalt + merkle_prefix + self._keys[index].sign_hash(digest)
 
     def get_nonce(self, index):
         """Get a nonce that can be used with a given signature"""
+        if not isinstance(index, int):
+            raise TypeError("index must be int")
+        if index < 0:
+            raise IndexError("Negative indices are invalid")
+        if index >= (1 << self._height):
+            raise IndexError("index out of range for levelkey with this height")
         return self._nonces[index]
 
     def sign_data(self, data, index):
         """Sign a message"""
+        if not isinstance(data, bytes):
+            raise TypeError("data must be bytes")
+        if not isinstance(index, int):
+            raise TypeError("index must be int")
+        if index < 0:
+            raise IndexError("Negative indices are invalid")
+        if index >= (1 << self._height):
+            raise IndexError("index out of range for levelkey with this height")
         bin_index = index.to_bytes(2,'big')
         merkle_prefix = _get_merkle_prefix(self._merkletree, self._height, index)
         return bin_index + self._levelsalt + merkle_prefix + self._keys[index].sign_data(data)
@@ -191,6 +255,8 @@ class _LevelSignature:
 
     def validate_data(self, data):
         """Validate a signature matches the data"""
+        if not isinstance(data, bytes):
+            raise TypeError("data must be bytes")
         reconstructed_pubkey = self._validator.validate_data(data,
                                                              self._ots_signature,
                                                              merkle_mode=True)
@@ -204,6 +270,10 @@ class _LevelSignature:
 
     def validate_hash(self, digest):
         """Validate that a signature matches a digest"""
+        if not isinstance(digest, bytes):
+            raise TypeError("digest must be bytes")
+        if len(digest) != self._hashlen:
+            raise ValueError("digest should be hashlen long")
         reconstructed_pubkey = self._validator.validate_hash(digest,
                                                              self._ots_signature,
                                                              merkle_mode=True)
@@ -223,10 +293,27 @@ class LevelValidation:
     # pylint: disable=too-few-public-methods
     """Convenience class for constructing _LevelSignature objects"""
     def __init__(self, hashlen, otsbits, height):
+        if not isinstance(hashlen, int):
+            raise TypeError("hashlen must be an integer")
+        if not isinstance(otsbits, int):
+            raise TypeError("otsbits must be an integer")
+        if not isinstance(height, int):
+            raise TypeError("height must be an integer")
+        if (hashlen < 16 or hashlen > 64):
+            raise ValueError("hashlen should have a value in the 16..64 range")
+        if otsbits < 4 or otsbits > 16:
+            raise ValueError("hashlen should have a value in the 4..16 range")
+        if height <3 or height > 16:
+            raise ValueError("height should have a value in the 3..16 range")
         self._hashlen = hashlen
         self._otsbits = otsbits
         self._height = height
+        self._chopcount = _ots_pairs_per_signature(hashlen, otsbits)
 
     def signature(self, level_signature):
         """Construct a signature object for a level signature"""
+        if not isinstance(level_signature, bytes):
+            raise TypeError("level_signature should be bytes")
+        if len(level_signature) != (3 +  2 * self._chopcount + self._height) * self._hashlen + 2:
+            raise ValueError("Wrong size for level_signature")
         return _LevelSignature(self._hashlen, self._otsbits, self._height, level_signature)
